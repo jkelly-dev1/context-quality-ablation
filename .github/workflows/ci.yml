@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Nothing here calls a model. The paid sweeps ran once and their
+      # results ship in results/; everything CI does is offline and needs no
+      # credential. That is deliberate: a CI job that can spend money is a CI
+      # job that will, on somebody else's pull request.
+      - name: Install pytest only
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pytest>=8,<10"
+
+      - run: python -m pytest -q
+
+      # The harness gate. It proves the floor, the ceiling, the grader and
+      # the field policy without a model, and exits non-zero if any of them
+      # stops holding.
+      - name: Pre-flight
+        run: python scripts/preflight.py
+
+      # Every number in README.md is re-derived from results/*.jsonl and must
+      # appear verbatim. A re-run that shifts a figure fails here rather than
+      # leaving the document quietly wrong.
+      - name: README numbers match the shipped results
+        run: python scripts/check_readme_numbers.py

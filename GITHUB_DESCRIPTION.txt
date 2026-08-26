@@ -1,0 +1,1 @@
+Measures whether context quality changes what an LLM answers: 150 questions, ten single-variable context conditions, two model vendors, and an answer key computed rather than judged. The finding that matters: bypassing a field-level privacy policy leaked on every prompt and cost nothing any quality metric could detect.

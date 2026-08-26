@@ -1,0 +1,31 @@
+# WHAT IS DELIBERATELY TRACKED, so that a later edit has to argue with a
+# sentence before it can drop it:
+#
+#   results/*.jsonl  THE EVIDENCE. Every number in README.md is derived from
+#                    these by scripts/check_readme_numbers.py, and CI fails if
+#                    a figure stops matching. THREE runs of 1,860 rows --
+#                    sweep.jsonl and sweep_openai.jsonl, one per model vendor,
+#                    plus sweep_replicate.jsonl, a second run of the Claude
+#                    configuration that is the only thing here measuring
+#                    run-to-run variance. sweep.failures.jsonl is the
+#                    retry log and is empty, which is the claim it makes.
+#   cqa/             the world, the questions, the ten conditions, the grader
+#                    and the governance detector
+#   scripts/         the pre-flight gate, the runner, the reporter and the
+#                    figure deriver
+#   tests/           the suite, including the mutation-checked guards
+#
+# THE RESULTS ARE THE POINT AND THEY ARE SMALL. Under four megabytes of JSONL
+# holds every generation: the answer, the per-field grade, the governance
+# verdict, token usage, and a hash of the question set and of the condition
+# that produced the row. Without them nothing in README.md can be
+# checked by a reader, which is the whole reason they ship.
+#
+# Excluded below is only what a clone can rebuild.
+
+envs
+.venv
+__pycache__
+.pytest_cache
+*.pyc
+.DS_Store
