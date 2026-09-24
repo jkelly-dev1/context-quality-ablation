@@ -31,6 +31,7 @@ from datetime import date, timedelta
 
 import hashlib
 import json
+import re
 
 from . import sources
 from .world import EPOCH, World
@@ -61,6 +62,48 @@ def _iso(d) -> str:
     return d.isoformat() if hasattr(d, "isoformat") else str(d)
 
 
+# The world's INTERNAL identifier for an agreement, as it appears in question
+# text. It is internal in the strict sense: `sources.crm_a` renames it to
+# AGR-nnn and `sources.crm_b` gives deals a numeric id of their own, so the
+# literal CTRnnn exists only in the world and in what the RESOLVED pipeline
+# renders from it. See `names_internal_id` below, and README.md's section on
+# what that costs the unresolved arm.
+INTERNAL_ID = re.compile(r"\b(CTR\d+)\b")
+
+
+def names_internal_id(q: "Question") -> str | None:
+    """The internal identifier this question's text names, if it names one.
+
+    A question that names one is asking about an entity by a name only the
+    resolved view uses. Any arm that does not render that view cannot match
+    the question to the entity, and the model correctly answers null, which
+    is a failure of identification and not of the property the arm is named
+    for. `scripts/preflight.py` checks that no arm loses an identifier except
+    the ones documented as legitimately losing it.
+    """
+    m = INTERNAL_ID.search(q.text)
+    return m.group(1) if m else None
+
+
+# Below this length a value is not evidence. "CA" appears in any prose, and a
+# floor check that searched for it would report every prompt as leaking its own
+# answer; four characters is where the world's values stop being ambiguous.
+MIN_DISTINCTIVE = 5
+
+
+def distinctive_answer_values(q: "Question") -> list:
+    """The answer values long enough that finding one in a prompt MEANS
+    something.
+
+    One definition, two callers. `scripts/preflight.py` uses it to decide
+    whether the floor arm's prompt states its own answer, and
+    tests/test_harness.py asserts the same property. A second copy of the
+    length rule in either caller could not fail when this one changed.
+    """
+    return [str(v) for v in q.answer.values()
+            if isinstance(v, str) and len(str(v)) >= MIN_DISTINCTIVE]
+
+
 def _name_agreement(w: World, org_id: str, k: dict, as_of: date) -> str:
     """Name the organization, and the agreement too when there is more than one.
 
@@ -68,6 +111,19 @@ def _name_agreement(w: World, org_id: str, k: dict, as_of: date) -> str:
     a model that answers null to an ambiguous question is behaving correctly.
     An ambiguous question therefore measures nothing, so the text disambiguates
     wherever the world does not.
+
+    It disambiguates with an identifier the unresolved arm cannot see, which
+    is the one place this repository fails its own "one arm changes one thing"
+    rule. `k["contract_id"]` is CTRnnn, the world's internal id; neither
+    source system carries it. The 22 questions this branch produces are
+    therefore asking the unresolved arm about an entity it cannot identify, and
+    about half that arm's published effect is that, not resolution. The text
+    stays as it is, because changing it would change
+    `questions.fingerprint` and invalidate all 5,580 shipped generations, which
+    cannot be re-measured without spending the money again. It is disclosed in
+    README.md, derived by `scripts/check_readme_numbers.py`, and gated by
+    `scripts/preflight.py` so that no OTHER arm can acquire the same flaw
+    unnoticed.
     """
     name = w.org(org_id)["name"]
     if len(w.contracts_for(org_id, as_of)) > 1:

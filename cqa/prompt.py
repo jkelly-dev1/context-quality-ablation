@@ -11,6 +11,7 @@ synthetic enough and the whole ablation is measuring fluency.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 
 from .questions import Question
@@ -44,6 +45,31 @@ def user_message(q: Question, context: str) -> str:
         f"Return a JSON object with exactly these keys:\n"
         f"{schema}\n"
     )
+
+
+# A placeholder, so that hashing the prompt hashes the PROMPT. Substituting a
+# real context would fold the arm into this hash, and the arm already has one.
+_PLACEHOLDER = "<context>"
+
+
+def fingerprint(qs) -> str:
+    """A hash of the prompt every generation in a run was sent inside.
+
+    This module's own first line calls the prompt "the thing held constant
+    while context varies". The question-set and arm hashes say nothing about
+    the instruction the model was answering under, and rewriting the rule at
+    the top of SYSTEM ("Answer strictly from the context" into "Use outside
+    knowledge freely") changes what the floor arm means. This hash makes a
+    results row describe that input too.
+
+    What it covers: SYSTEM, and the rendered user message for every question
+    with a placeholder in place of the context. That takes in the wording, the
+    AS-OF DATE header, the question line, the JSON schema and the order they
+    appear in. What it deliberately does not cover is the context itself,
+    which is what `assemble.arm_fingerprint` is for.
+    """
+    blob = SYSTEM + "\n".join(user_message(q, _PLACEHOLDER) for q in qs)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
 def answer_schema(q: Question) -> dict:

@@ -120,7 +120,11 @@ def ask(client, q, context: str, model=None):
     """One generation. Returns (parsed answer, usage, raw text)."""
     user = prompt.user_message(q, context)
     last = None
-    for attempt in range(7):
+    # FIVE attempts, matching `ask_openai` and matching the `attempt == 4`
+    # break below. This read `range(7)` while breaking on the fifth pass, so
+    # two of the seven were unreachable and the bound said six retries where
+    # the code does four.
+    for attempt in range(5):
         try:
             resp = client.messages.create(
                 model=model or MODEL,
@@ -176,6 +180,10 @@ def main() -> int:
     qs = questions.build(w)
     values = leak.forbidden_values(w)
     fp = questions.fingerprint(qs)
+    # The prompt is the third input, and it was the unstamped one. Model,
+    # prompt and question set are what this experiment holds constant; two of
+    # the three were hashed onto every row and the prompt was not.
+    prompt_fp = prompt.fingerprint(qs)
     arm_fp = {a: assemble.arm_fingerprint(w, qs, a)
               for a in assemble.ARMS}
     # The curve reuses the arm slot for its budget, so its rows are stamped
@@ -204,7 +212,7 @@ def main() -> int:
 
     print(f"{len(units)} generations to run ({len(already)} already "
           f"recorded), {args.provider} {model}, effort {EFFORT}, "
-          f"{args.workers} workers, question set {fp}")
+          f"{args.workers} workers, question set {fp}, prompt {prompt_fp}")
 
     state = {"n": 0, "tin": 0, "tout": 0, "fail": 0, "reasons": {}}
     fh = results.open("a", encoding="utf-8")
@@ -244,6 +252,7 @@ def main() -> int:
             "usage": usage, "provider": args.provider,
             "model": model, "effort": EFFORT,
             "questions_fingerprint": fp,
+            "prompt_fingerprint": prompt_fp,
             "arm_fingerprint": arm_fp[arm],
         }
         with _lock:

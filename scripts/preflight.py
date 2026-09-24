@@ -24,7 +24,7 @@ LAYER 2: a local model, optional. Point --local at any OpenAI-compatible
 endpoint (llama.cpp's server, ollama, vLLM) and a sample of questions is run
 through it for real. What this validates is narrow: that a real model, given
 these prompts, returns schema-valid JSON that the grader can score, and that
-it refuses the floor rather than guessing.
+it refuses the floor instead of guessing.
 
 What it does not validate is the result. A small local model has a different
 accuracy profile, so arm separation seen here does not predict the paid run
@@ -54,8 +54,7 @@ def oracle(q, context: str) -> dict:
 
     Reads "key: value" lines and matches them to the answer keys by name. It
     cannot compute, so derived answers come back as None, which is correct
-    behavior for a reader that only reads, and is why the checks below exempt
-    them rather than pretending otherwise.
+    behavior for a reader that only reads, so the checks below exempt them.
     """
     # when the question names an agreement, read from that agreement's block.
     # A reader that takes the first matching key answers about the wrong
@@ -63,10 +62,13 @@ def oracle(q, context: str) -> dict:
     # in a harness that is correct. A failing preflight check is a claim about
     # the harness OR about the checker, and the two must be told apart before
     # anything is changed.
-    named = re.search(r"\b(CTR\d+)\b", q.text)
+    # The pattern lives in cqa.questions, which is where the id is written.
+    # A second copy here would be one more thing to keep in step, and the
+    # checks below decide a published figure by it.
+    named = questions.names_internal_id(q)
     if named:
         blocks = re.split(r"^\s*- \[\d+\]\s*$", context, flags=re.M)
-        context = next((b for b in blocks if named.group(1) in b), context)
+        context = next((b for b in blocks if named in b), context)
 
     stated: dict[str, list[str]] = {}
     for line in context.splitlines():
@@ -122,7 +124,7 @@ def layer1(w, qs, values) -> list:
     check(r, "every prompt carries its own question", not missing,
           f"{len(missing)} missing")
 
-    # And its own as-of date. The system prompt instructs the model to answer
+    # Its own as-of date too. The system prompt instructs the model to answer
     # as of the date given, every arm assembles as of a specific date, the
     # stale arm exists to disagree with it, and the key is computed from it.
     # The check above looks only for the question text, so removing the date
@@ -135,15 +137,14 @@ def layer1(w, qs, values) -> list:
 
     # Named for what it actually tests. The oracle reads the context, and the
     # floor arm's context is the empty string by construction, so running the
-    # oracle over it can only ever return None. That made the old check a
-    # tautology wearing the title of a much stronger claim. Whether a MODEL
+    # oracle over it can only ever return None and would prove nothing. What
+    # this checks is that the floor prompt states no answer. Whether a MODEL
     # can answer these questions from general knowledge is measured by the
     # paid floor arm and cannot be established here.
     leaky = [q.qid for q in qs
              if assemble.context_for(w, q, "none").strip()
-             or any(str(v) in prompt.user_message(q, "")
-                    for v in q.answer.values()
-                    if isinstance(v, str) and len(str(v)) > 4)]
+             or any(v in prompt.user_message(q, "")
+                    for v in questions.distinctive_answer_values(q))]
     check(r, "the floor arm carries no context and no answer in its prompt",
           not leaky, f"{len(leaky)} prompts contain their own answer")
 
@@ -189,7 +190,7 @@ def layer1(w, qs, values) -> list:
     check(r, "the fingerprint changes when any answer key changes",
           questions.fingerprint(perturbed) != fp, fp)
 
-    # THE CURVE IS 360 OF 1,860 paid generations and was never exercised here.
+    # The curve is 360 of the 1,860 paid generations, so it is checked too.
     curve_qs = questions.curve_subset(qs)
     sizes, curve_leaks = [], 0
     for q in curve_qs:
@@ -211,6 +212,51 @@ def layer1(w, qs, values) -> list:
         for q in curve_qs for b in assemble.CURVE_BUDGETS)
     check(r, "the curve budget actually bounds the context", binds)
 
+    # Every arm must be able to identify what it is asked about.
+    #
+    # The check above is about answer values. This one is about the ids the
+    # question text names. 22 of the 150 questions name an agreement by the
+    # world's internal id ("agreement CTR014 at Northwind"), which neither
+    # source system carries, and the unresolved arm renders raw source rows.
+    # In those 22 contexts the literal id the question names is absent, the
+    # model correctly answers null, and about half that arm's published effect
+    # is a failure of identification, not of resolution: that arm changes two
+    # things, which README.md discloses.
+    #
+    # Three arms may legitimately lose an identifier, and each is exempt for a
+    # reason that is its own named mechanism rather than an oversight:
+    ID_EXEMPT = {
+        "none": "renders no context at all, which is the floor's definition",
+        "incomplete": "drops a fixed number of top-level fields, which is the "
+                      "property it measures; the agreements block is "
+                      "sometimes among them",
+        "unresolved": "renders raw source rows, and no source system carries "
+                      "the internal id -- THE DISCLOSED CONFOUND, see README",
+    }
+    named = [(q, questions.names_internal_id(q)) for q in qs]
+    named = [(q, cid) for q, cid in named if cid]
+    lost = []
+    for arm in assemble.ARMS:
+        if arm in ID_EXEMPT:
+            continue
+        for q, cid in named:
+            if cid not in assemble.context_for(w, q, arm):
+                lost.append((q.qid, arm, cid))
+    check(r, "every arm states the identifiers its questions name, except the "
+          "three that cannot", not lost,
+          f"{len(lost)} lost across {len(assemble.ARMS) - len(ID_EXEMPT)} arms")
+
+    # The disclosed confound must be all-or-nothing. README.md excludes the
+    # whole set of identifier-naming questions when it restates the unresolved
+    # effect, and that arithmetic is only right if the arm loses every one of
+    # them, not some. A partial loss would need a different correction and
+    # would make the published one wrong.
+    kept = [q.qid for q, cid in named
+            if cid in assemble.context_for(w, q, "unresolved")]
+    check(r, "the unresolved arm loses every named identifier, not some",
+          not kept and bool(named),
+          f"{len(named)} questions name one, {len(kept)} still identifiable")
+
     # The key must be obtainable from a source system. A baseline that states
     # a value neither CRM carries is reading world truth no pipeline could
     # reach, and the arm gap then measures oracle access.
@@ -228,8 +274,51 @@ def layer1(w, qs, values) -> list:
     return r
 
 
+# The schemes urllib will open that this tool has any business opening.
+# urllib honors file://, ftp:// and whatever else is registered, so a URL
+# that arrives as a string and is opened without a check is a file read
+# waiting for the wrong argument.
+_LOCAL_SCHEMES = ("http://", "https://")
+
+# An opener that cannot open a file: the mechanism, not just the promise. The
+# string check below refuses the wrong scheme; this makes the refusal true of
+# the machinery too, so an edit that drops the sentence still cannot read a
+# file.
+#
+# Built from an empty OpenerDirector, not from build_opener. `build_opener`
+# adds the default handlers to whatever it is given, FileHandler among them, so
+# `build_opener(HTTPHandler, HTTPSHandler)` reads /etc/passwd perfectly well.
+# A restricted opener has to be assembled from nothing, and the claim has to be
+# run against the scheme it forbids.
+#
+# UnknownHandler is what makes the refusal an error. An OpenerDirector with no
+# handler for a scheme does not raise; it returns None, and the caller then
+# fails on `None.__enter__` with an AttributeError that names nothing. That is
+# a refusal by accident. UnknownHandler raises URLError("unknown url type:
+# file"), which is a refusal that says what it refused.
+_HTTP_ONLY = urllib.request.OpenerDirector()
+for _handler in (urllib.request.HTTPHandler, urllib.request.HTTPSHandler,
+                 urllib.request.HTTPRedirectHandler,
+                 urllib.request.HTTPErrorProcessor,
+                 urllib.request.UnknownHandler):
+    _HTTP_ONLY.add_handler(_handler())
+
+
 def ask_local(base_url: str, model: str, q, context: str):
-    """One call to an OpenAI-compatible local endpoint."""
+    """One call to an OpenAI-compatible local endpoint.
+
+    The scheme is checked before the URL is opened. `--local` is an operator
+    argument, not untrusted input, so this is not a hole somebody is reaching
+    through, but `urllib.request.urlopen` will happily open
+    `file:///etc/passwd`, and the operator typing it would get a JSON parse
+    error instead of a refusal. A one-line scheme check removes the surface
+    instead of arguing about how reachable it is.
+    """
+    if not base_url.startswith(_LOCAL_SCHEMES):
+        raise ValueError(
+            f"--local must be an http:// or https:// URL, not {base_url!r}. "
+            f"urllib would open a file:// or ftp:// URL as readily as an "
+            f"endpoint, and layer 2 talks to a model over HTTP.")
     body = json.dumps({
         "model": model,
         "messages": [{"role": "system", "content": prompt.SYSTEM},
@@ -241,7 +330,7 @@ def ask_local(base_url: str, model: str, q, context: str):
         base_url.rstrip("/") + "/v1/chat/completions", data=body,
         headers={"Content-Type": "application/json",
                  "Authorization": "Bearer local"})
-    with urllib.request.urlopen(req, timeout=180) as resp:
+    with _HTTP_ONLY.open(req, timeout=180) as resp:
         payload = json.load(resp)
     text = payload["choices"][0]["message"]["content"]
     m = re.search(r"\{.*\}", text, re.S)
@@ -250,6 +339,15 @@ def ask_local(base_url: str, model: str, q, context: str):
 
 def layer2(w, qs, base_url: str, model: str) -> list:
     r: list = []
+    # The same refusal as ask_local's, and here first. Both functions take the
+    # same (base_url, model), and this one renders a sample of questions before
+    # the first request is built, so without the check the operator who typed
+    # a file:// URL would wait through that work to be told at the last moment,
+    # by the other function. A guard on one of two siblings is a guard with a way
+    # around it.
+    if not base_url.startswith(_LOCAL_SCHEMES):
+        raise ValueError(
+            f"--local must be an http:// or https:// URL, not {base_url!r}.")
     print(f"\nLAYER 2 -- local model at {base_url} ({model})")
     sample = qs[::max(1, len(qs) // LOCAL_SAMPLE)][:LOCAL_SAMPLE]
     parsed = floor_ok = 0

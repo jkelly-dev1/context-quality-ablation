@@ -12,6 +12,19 @@ Two rules that make the ablation mean anything:
   selection, not in the entities included. An arm that moves two variables
   cannot attribute its own result.
 
+  THE `unresolved` ARM BREAKS THIS RULE AND THE BREAK IS PUBLISHED. 22 of the
+  150 questions name an agreement by the world's internal id, CTRnnn, which
+  only the RESOLVED view renders; this arm renders raw source rows, and
+  neither source system carries that id. So on those 22 it varies the
+  identifier space as well as resolution, the model correctly answers null,
+  and about half the arm's reported effect is that rather than resolution.
+  Excluding them the effect is roughly -11 instead of -19.7, still separates,
+  still replicates and keeps its order behind incompleteness.
+  It is disclosed rather than fixed because the question text is inside
+  `questions.fingerprint` and changing it would invalidate all 5,580 shipped
+  generations. README.md carries the correction, derived from the rows;
+  `scripts/preflight.py` fails if any OTHER arm acquires the same flaw.
+
   Every arm assembles as of the question's own timestamp. Leaking a fact from
   after the as-of date inflates every arm at once, which is invisible because
   it moves nothing relative to anything.
@@ -44,7 +57,10 @@ ARM_LABEL = {
     "resolved": "resolved production context (baseline)",
     "unresolved": "resolution disabled, string-match joins only",
     "stale": "volatile fields 30 days stale",
-    "incomplete": "40 percent of fields dropped",
+    # Filled in below, once the numbers it quotes exist. A label that states a
+    # fraction the code does not produce is a published claim, and this one
+    # said "40 percent" against a rendering that drops 44.4.
+    "incomplete": None,
     "diluted": "baseline plus every other organization's records",
     "unpoliced": "baseline content with the field policy not applied",
     "nostructure": "same facts rendered as prose",
@@ -52,7 +68,27 @@ ARM_LABEL = {
 }
 
 STALE_DAYS = 30
-DROP_FRACTION = 0.4
+
+# The input is the count, and the fraction is derived from it.
+#
+# Every question offers exactly nine droppable keys. A fraction as the input
+# would be rounded: `round(9 * f)` is 4 for every f in [0.39, 0.5], so a
+# fraction constant would be decorative across that whole range, rendering
+# byte-identical contexts with every fingerprint unchanged, and a round "40
+# percent" label would describe an arm that drops 4 of 9 (44.4 percent).
+#
+# So the count is what the code takes and the fraction is what the code
+# reports. No value can be changed without changing the rendering: a
+# different count moves every incomplete context immediately.
+DROPPED_FIELDS = 4
+# Measured over all 150 questions, and pinned by a test:
+# the merged view has ten keys, `organization` is never droppable, and none of
+# the remaining nine is ever absent.
+CANDIDATE_FIELDS = 9
+# Derived, never typed. This is the figure README.md and the arm label state.
+DROP_FRACTION = DROPPED_FIELDS / CANDIDATE_FIELDS
+ARM_LABEL["incomplete"] = (f"{DROPPED_FIELDS} of {CANDIDATE_FIELDS} fields "
+                           f"dropped ({100 * DROP_FRACTION:.1f} percent)")
 
 
 def _norm(name: str) -> str:
@@ -382,7 +418,13 @@ def context_for(w: World, q: Question, arm: str) -> str:
         merged = _resolve(w, q, as_of)
         rng = random.Random(f"{q.qid}:incomplete")
         keys = [k for k in merged if k not in ("organization",)]
-        drop = set(rng.sample(keys, round(len(keys) * DROP_FRACTION)))
+        # A COUNT, not a fraction of a count. `round(len(keys) * 0.4)` gave 4
+        # here and gave 4 for every fraction from 0.39 to 0.5, which made the
+        # fraction unfalsifiable. min() is a bound and not a policy: it exists
+        # so a world with fewer keys degrades instead of raising, and the test
+        # asserts len(keys) == CANDIDATE_FIELDS on every question so it cannot
+        # quietly start binding.
+        drop = set(rng.sample(keys, min(DROPPED_FIELDS, len(keys))))
         return _render({k: v for k, v in merged.items() if k not in drop})
 
     if arm == "unresolved":
@@ -478,6 +520,15 @@ def arm_fingerprint(w, qs, arm: str) -> str:
     Per arm, deliberately. A change to one arm invalidates that arm and not
     the other nine, so a fix costs one arm's re-run instead of a whole sweep.
     """
+    if not qs:
+        # An empty question set is not a condition. `context_for` refuses an
+        # arm it does not know, and this loop would never reach it: zero
+        # questions render zero contexts, and the hash of the empty string is
+        # a perfectly plausible-looking fingerprint for nothing at all. A
+        # stamp that survives having examined no question is the shape this
+        # whole mechanism exists to prevent.
+        raise ValueError("no questions: an arm fingerprint over an empty "
+                         "question set describes nothing")
     blob = "\n".join(context_for(w, q, arm) for q in qs)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -485,13 +536,15 @@ def arm_fingerprint(w, qs, arm: str) -> str:
 def curve_fingerprint(w, qs, budget: int) -> str:
     """The same hash, for one point on the budget curve.
 
-    A curve point is a condition too. The sweep stamped every arm row with the
-    hash of what that arm renders and stamped curve rows with the literal
-    string "curve". 360 of the 1,860 rows in a run, 19.4%, carrying no
-    description of what produced them. A change to the ranking, to the
-    truncation rule or to CHARS_PER_TOKEN would leave every one of those rows
-    aggregating under a label that no longer describes them, which is exactly
-    what the arm fingerprint exists to prevent.
+    A curve point is a condition too: 360 of the 1,860 rows in a run, 19.4%,
+    are curve rows. Without a hash of what each budget renders, a change to
+    the ranking, to the truncation rule or to CHARS_PER_TOKEN would leave
+    every one of those rows aggregating under a label that no longer
+    describes them, which is exactly what the arm fingerprint exists to
+    prevent.
     """
+    if not qs:
+        raise ValueError("no questions: a curve fingerprint over an empty "
+                         "question set describes nothing")
     blob = "\n".join(curve_context(w, q, budget) for q in qs)
     return hashlib.sha256(f"curve:{budget}\n{blob}".encode("utf-8")).hexdigest()[:16]

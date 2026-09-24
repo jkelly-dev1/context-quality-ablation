@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cqa import assemble, questions, world
+from cqa import assemble, prompt, questions, world
 
 DEFAULT = Path(__file__).resolve().parents[1] / "results" / "sweep.jsonl"
 BASE = "resolved"
@@ -73,15 +73,51 @@ def paired_ci(arm_rows: dict, base_rows: dict, rng: random.Random):
     return point, boots[int(0.025 * len(boots))], boots[int(0.975 * len(boots))]
 
 
+def paired_by_arm(by_arm: dict, base_by_q: dict, rng: random.Random) -> dict:
+    """Every arm's paired difference and interval, in ARMS order.
+
+    One implementation, because two consumers need the same answer: this
+    module prints it, and scripts/check_readme_numbers.py compares README.md's
+    bold cells against it. The bootstrap is seeded, so "the same answer" means
+    the same draws in the same order, and a second copy of this loop elsewhere
+    would consume the generator differently and could disagree about a
+    borderline arm, which is the one case anybody would care about.
+    """
+    out = {}
+    for arm in assemble.ARMS:
+        rs = by_arm.get(arm, [])
+        if not rs:
+            continue
+        out[arm] = paired_ci({r["qid"]: r for r in rs}, base_by_q, rng)
+    return out
+
+
+def separated(stats: dict) -> set:
+    """The arms whose interval excludes zero: what `*` marks, and what BOLD
+    means in README.md's condition table.
+
+    The baseline is excluded because its difference against itself is zero by
+    construction, not by measurement.
+    """
+    return {arm for arm, (pt, lo, hi) in stats.items()
+            if arm != BASE and pt is not None and (lo > 0 or hi < 0)}
+
+
 def main() -> int:
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT
     rows = load(path)
     rng = random.Random(SEED)
 
+    # Built once, and every gate below reads them. Three separate
+    # `world.build()` calls here made the refusals look independent when they
+    # are three views of one tree.
+    _w = world.build()
+    _qs = questions.build(_w)
+
     # Refuse to aggregate rows the current code no longer produces. A
     # results file outlives the generator that wrote it, and rendering it
     # afterwards reports numbers for questions that no longer exist.
-    live = questions.fingerprint(questions.build(world.build()))
+    live = questions.fingerprint(_qs)
     stamps = {r.get("questions_fingerprint", "unstamped") for r in rows}
     if stamps != {live}:
         print(f"REFUSING TO REPORT. The current question set fingerprints as "
@@ -91,11 +127,24 @@ def main() -> int:
               f"Re-run, or report against the\ncode revision that produced "
               f"them.")
         return 2
+    # The prompt is the third held-constant input. A question set and an arm
+    # that both match are still not enough: the instruction the model answered
+    # under is what makes an answer mean anything. An unstamped row matches
+    # nothing here and is reported stale, which is the correct answer, because
+    # nothing in it can certify what it was asked.
+    live_prompt = prompt.fingerprint(_qs)
+    prompts = {r.get("prompt_fingerprint", "unstamped") for r in rows}
+    if prompts != {live_prompt}:
+        print(f"REFUSING TO REPORT. The current prompt fingerprints as "
+              f"{live_prompt};\nthese results carry {sorted(prompts)}.\n"
+              f"They were produced under a different instruction, so the "
+              f"numbers below would\ndescribe answers given to a question this "
+              f"code no longer asks in that way.\nRe-run, or report against "
+              f"the code revision that produced them.")
+        return 2
     # Per-arm staleness, named. A question-set match is not enough: an arm
     # whose assembly changed is stale on its own, and dropping it silently
     # would leave a table that looks complete.
-    _w = world.build()
-    _qs = questions.build(_w)
     live_arm = {a: assemble.arm_fingerprint(_w, _qs, a) for a in assemble.ARMS}
     # The curve is checked the same way. Its rows reuse the arm slot for their
     # budget, and a budget is a condition: a change to the ranking or the
@@ -125,7 +174,25 @@ def main() -> int:
 
     print(f"{len(rows)} generations | {len(arms_rows)} arms + "
           f"{len(curve_rows)} curve | {n_q} questions | "
-          f"{rows[0]['model']} effort {rows[0]['effort']}\n")
+          f"{rows[0]['model']} effort {rows[0]['effort']}")
+    # Provenance, where the numbers are read. Every row above passed the three
+    # refusals, which means its stamps match this code. It does not mean every
+    # stamp was written when the generation was. A hash added afterward is an
+    # assertion that the code did not change between the run and the
+    # stamping, and no row can carry evidence for that. It is printed here so
+    # a reader does not have to open results/*.jsonl to learn it.
+    at_write = {f: sum(1 for r in rows if not r.get(f + "_backfilled"))
+                for f in ("arm_fingerprint", "prompt_fingerprint")}
+    asserted = {f: len(rows) - n for f, n in at_write.items()}
+    if any(asserted.values()):
+        parts = ", ".join(
+            f"{f.replace('_fingerprint', '')} {asserted[f]:,}"
+            for f in sorted(asserted) if asserted[f])
+        print(f"PROVENANCE: {parts} of {len(rows):,} rows carry a hash written "
+              f"AFTER the run\n            (an assertion that the code did not "
+              f"change, not a measurement that it did not);\n            the "
+              f"rest were stamped at write time.")
+    print()
 
     base_by_q = {r["qid"]: r for r in by_arm[BASE]}
     # Two averages, both named. Field% weights every FIELD equally (micro);
@@ -137,11 +204,12 @@ def main() -> int:
           f"{'paired-d':>9} {'95% CI':>16} {'in tok':>8} {'sig':<1} "
           f"{'leak':>5}  " +
           " ".join(f"{s[:4]:>5}" for s in strata))
+    stats = paired_by_arm(by_arm, base_by_q, rng)
     for arm in assemble.ARMS:
         rs = by_arm.get(arm, [])
         if not rs:
             continue
-        pt, lo, hi = paired_ci({r["qid"]: r for r in rs}, base_by_q, rng)
+        pt, lo, hi = stats[arm]
         if pt is None:
             print(f"{arm:<13} {field_acc(rs):>7.1f} {exact(rs):>7.1f} "
                   f"{'n/a':>8} {'n/a':>9} {'no paired questions':>16}")

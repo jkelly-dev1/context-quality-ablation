@@ -29,3 +29,20 @@ __pycache__
 .pytest_cache
 *.pyc
 .DS_Store
+
+# The default credential path. scripts/sweep.py reads the key from the file
+# ENV_FILE names and falls back to ./.env when ENV_FILE is unset, so an
+# operator who follows the shortest path leaves a key file in the working
+# tree. Untracked is not the same as ignored: an untracked .env shows up in
+# `git status` and is picked up by `git add -A`. SECURITY.md says credentials
+# are never committed, and this line is what makes that true.
+.env
+.env.*
+
+# scripts/mutation_suite.py's crash-recovery state. The sentinel names the file
+# it has patched and the pristine copy is what puts it back, so both must
+# survive a killed run and neither may be committed: a pristine copy in a
+# commit is a second copy of a source file, and a sentinel in a commit tells
+# the next reader the tree is mid-patch when it is not.
+.mutation_suite_state.json
+.mutation_suite_pristine/

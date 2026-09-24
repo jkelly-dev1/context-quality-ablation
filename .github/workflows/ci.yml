@@ -16,9 +16,10 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v7
+      # Actions are pinned to a full commit SHA, because a tag can be moved.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -44,3 +45,22 @@ jobs:
       # leaving the document quietly wrong.
       - name: README numbers match the shipped results
         run: python scripts/check_readme_numbers.py
+
+      # The report is the gate carrying three refusals (a question set, a
+      # prompt and a per-arm assembly that no longer match the shipped rows),
+      # and none of them is exercised by rendering nothing. Running it here
+      # means an edit that invalidates the evidence fails on the push that
+      # makes it, not the next time somebody renders a table by hand.
+      - name: The shipped results still describe this code
+        run: |
+          python scripts/report.py
+          python scripts/report.py results/sweep_openai.jsonl
+          python scripts/report.py results/sweep_replicate.jsonl
+
+      # A test that has never failed is a guess. This patches real code and
+      # requires the named test to go red, and it refuses to start if a target
+      # string has left a file or a named test has stopped collecting or no
+      # longer passes on its own. It is what makes README.md's
+      # "(mutation-checked: ...)" claims re-runnable instead of asserted.
+      - name: Mutation suite
+        run: python scripts/mutation_suite.py

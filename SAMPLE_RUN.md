@@ -4,20 +4,22 @@ Captured output. Nothing here is retyped, summarized or reformatted; each block
 is the literal stdout of the command above it. Where anything had been altered
 this header would say so, and nothing was.
 
-Captured: 2026-08-25T05:21:02Z
+Captured: 2026-09-19T06:17:23Z
 Python: 3.13.7
 
 The paid runs are not repeated here. Their results ship in `results/` and every
-figure in README.md is rebuilt from them by the last command below. The first
-three commands need no network, no credentials and no model.
+figure in README.md is rebuilt from them by `scripts/check_readme_numbers.py`.
+NONE of the commands below needs a network, a credential or a model, and CI
+runs every one of them on every push.
 
 ## Proving the harness, with no model at all
 
 ```
 $ python3 scripts/preflight.py
-LAYER 1: oracle reader, no model, no network
+LAYER 1 -- oracle reader, no model, no network
   PASS  every arm produces distinct, non-empty context  0 empty, 0 collisions
   PASS  every prompt carries its own question  0 missing
+  PASS  every prompt states its own as-of date  0 missing
   PASS  the floor arm carries no context and no answer in its prompt  0 prompts contain their own answer
   PASS  the ceiling STATES every non-derived answer  0 unreachable
   PASS  the grader accepts a correct answer
@@ -27,9 +29,11 @@ LAYER 1: oracle reader, no model, no network
   PASS  the curve renders and grows with its budget  0 budgets shrank
   PASS  the curve carries no forbidden field  0 leaking prompts
   PASS  the curve budget actually bounds the context
+  PASS  every arm states the identifiers its questions name, except the three that cannot  0 lost across 7 arms
+  PASS  the unresolved arm loses every named identifier, not some  22 questions name one, 0 still identifiable
   PASS  every answer key is obtainable from a source system  0 unobtainable
 
-12/12 checks passed
+15/15 checks passed
 Harness is sound. A paid run measures the model, not the harness.
 ```
 
@@ -44,27 +48,83 @@ policy fires on exactly one condition.
 
 ```
 $ python3 -m pytest -q
-..........................................................               [100%]
-58 passed in 10.59s
+........................................................................ [ 90%]
+........                                                                 [100%]
+80 passed in 33.33s
 ```
 
 ## Every README figure, rebuilt from the shipped evidence
 
 ```
 $ python3 scripts/check_readme_numbers.py
-34 figures derived from sweep.jsonl, sweep_openai.jsonl
-34 found in README.md, 0 missing
+63 figures derived from sweep.jsonl, sweep_openai.jsonl, sweep_replicate.jsonl
+  30 condition-table cells compared BY POSITION (arm and run), plus 30 emphasis verdicts
+  33 figures matched IN CONTEXT, with the sentence around them
+63 found in README.md, 0 missing
 ```
 
 It prints the count whether or not anything is missing, so a version that
-quietly stopped deriving half the figures is visible rather than clean. It is
-a substring test: it cannot tell a right number in a wrong cell.
+quietly stopped deriving half the figures is visible rather than clean, and
+that count is itself one of the figures. The 30 condition-table cells are
+compared BY POSITION (a right number in a wrong cell fails), and each bold
+cell is compared against whether that condition's interval actually excludes
+zero. The rest are matched together with enough of their own sentence to make
+the match mean something.
+
+## Breaking the code one piece at a time, and requiring a test to notice
+
+```
+$ python3 scripts/mutation_suite.py
+30 mutations, each with its own named test
+
+  M1 the incomplete arm drops a different number of fields than th caught
+  M2 THE GENERAL GUARD: the same mutation, caught because the ship caught
+  M3 the bootstrap returns an interval of zero width around the es caught
+  M4 the per-arm staleness refusal is switched off while the repor caught
+  M5 the prompt's first rule is rewritten to the opposite instruct caught
+  M6 the same edit, caught by the fingerprint that now covers the  caught
+  M7 the unresolved arm starts stating the internal id, which REMO caught
+  M8 the default credential path stops being ignored by git, so `g caught
+  M9 the figure checker keeps its own copy of the prices, so a pri caught
+  M10 the batch rate is typed as a pair of literals again -- equal caught
+  M11 a condition whose interval excludes zero loses its emphasis, caught
+  M12 the count of derived figures is left at a stale value, which caught
+  M13 the report's prompt gate is switched off, so results recorde caught
+  M14 a failed pre-flight check stops refusing to certify -- the C caught
+  M15 the leak detector compares only the exact stored string, so  caught
+  M16 the stale arm rewinds the WHOLE context instead of the volat caught
+  M17 the answer key orders by ARRIVAL instead of effective date,  caught
+  M18 a contact's email stops following them to a new employer, so caught
+  M30 the sibling that renders a sample before the first request s caught
+  M29 the local endpoint URL stops being checked, so urllib will o caught
+  M25 the question-set refusal is switched off, so results from a  caught
+  M26 the arm table prints a difference with no interval beside it caught
+  M27 the leak summary stops naming the arms that leak, so it can  caught
+  M28 the question-set refusal fires on results that DO match, so  caught
+  M23 the predicate the floor check searches with stops qualifying caught
+  M24 the same edit, caught by the floor check itself going quiet  caught
+  M21 the report's refusal stops setting a non-zero exit code, so  caught
+  M22 the suite stops refusing an entry whose target text has left caught
+  M20 the report stops saying which stamps were written after the  caught
+  M19 an arm fingerprint over an EMPTY question set goes back to r caught
+
+30 of 30 caught
+```
+
+The claims table's mutation-checked rows are re-run by this command. It
+refuses to start if an entry's target text has left its file, if a named test
+no longer collects, or if a named test does not pass on its own before anything
+is patched, because each of those makes an entry score by something other than
+the mutation it names.
 
 ## The Claude results
 
 ```
 $ python3 scripts/report.py
 1860 generations | 1500 arms + 360 curve | 150 questions | claude-sonnet-5 effort low
+PROVENANCE: arm 360, prompt 1,860 of 1,860 rows carry a hash written AFTER the run
+            (an assertion that the code did not change, not a measurement that it did not);
+            the rest were stamped at write time.
 
 arm            field%  exact%  micro-d  paired-d           95% CI   in tok sig  leak   comp  look  reso  surv
 none              0.0     0.0    -97.5     -96.7   [-99.0, -93.7]      499 *     0      0     0     0     0
@@ -119,6 +179,9 @@ GOVERNANCE:
 ```
 $ python3 scripts/report.py results/sweep_openai.jsonl
 1860 generations | 1500 arms + 360 curve | 150 questions | gpt-5.6-terra effort low
+PROVENANCE: arm 360, prompt 1,860 of 1,860 rows carry a hash written AFTER the run
+            (an assertion that the code did not change, not a measurement that it did not);
+            the rest were stamped at write time.
 
 arm            field%  exact%  micro-d  paired-d           95% CI   in tok sig  leak   comp  look  reso  surv
 none              0.0     0.0    -97.9     -98.0   [-99.7, -96.0]      212 *     0      0     0     0     0
@@ -175,12 +238,22 @@ replicate and replicate across both vendors: incompleteness and unresolved
 entities. Two more separate WITHIN a run and are the same size as that drift,
 so they are reported as suggestive rather than established.
 
+The `unresolved` row above is an UPPER BOUND and not a measurement of entity
+resolution alone: 22 of the 150 questions name an agreement by an identifier
+only the resolved view carries, so that arm cannot identify what it is asked
+about and correctly answers null. Excluding those 22 the effect is roughly -11
+rather than -19.7. README.md derives the corrected figures from these same
+rows and `scripts/preflight.py` gates the property; the two checks added for
+it are the last two PASS lines in the first block above.
+
 The conditions that do not separate are as interesting: dilution, prose
 rendering and skipping the field policy. The last is the security result. 150
 leaked prompts per run, with an accuracy signal that lands on both sides of the
 baseline across runs, which is what no effect looks like.
 
-That budget prediction is refuted on every run, and the report says so in its own
-words. It does not print a peak and leave a reader to infer confirmation. The
-only budgets that separate from the largest are the small ones, and they
-separate downward, which is the opposite claim.
+That budget prediction is NOT SUPPORTED on either run, and the report says so in
+its own words. It does not print a peak and leave a reader to infer
+confirmation. The only budgets that separate from the largest are the small
+ones, and they separate downward, which is the opposite claim. Not supported is
+not the same as refuted and `PREDICTIONS.md` says why; all three documents use
+the weaker word because it is the one this design can support.

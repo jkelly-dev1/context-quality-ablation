@@ -13,18 +13,29 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cqa import assemble, leak, prompt, questions, world
+import sweep                                              # noqa: E402
 
-# Per million tokens. Claude Sonnet 5 is $2/$10 STANDARD. The increase to
-# $3/$15 once scheduled for 2026-09-01 was canceled, so a table still calling
-# $2/$10 "introductory" is stale. Batch is half of both.
+# Per million tokens, IMPORTED FROM THE RUNNER and never redefined. Claude
+# Sonnet 5 is $2/$10 standard: the increase to $3/$15 once scheduled for
+# 2026-09-01 was canceled, so a table still calling $2/$10 "introductory" is
+# stale. Batch is half of both, which is a RULE about the standard rate and is
+# applied to it here rather than typed as a second pair of numbers.
+_STD = (sweep.PROVIDERS["anthropic"]["in"], sweep.PROVIDERS["anthropic"]["out"])
 RATES = {
-    "sonnet-5 standard": (2.00, 10.00),
-    "sonnet-5 batch": (1.00, 5.00),
+    "sonnet-5 standard": _STD,
+    "sonnet-5 batch": (_STD[0] / 2, _STD[1] / 2),
 }
-# Output is a small JSON object. Replace this with the measured mean once
-# a run has reported one; it is an assumption until then and says so.
+# Output is a small JSON object. This is an assumption, not a measurement, and
+# the print below says so in those words. The completed runs report means of
+# 37.0 (Claude) and 28.7 (GPT) output tokens, so this over-estimates and the
+# estimate it feeds is therefore an upper bound and not a central one, which
+# is the direction a budget approval wants to be wrong in. It is not
+# replaced by either measured mean because this script runs BEFORE a run, for
+# a run that has not happened, and a figure taken from a completed run of a
+# different configuration is not this run's mean either.
 ASSUMED_OUTPUT_TOKENS = 39
 # Imported, never redefined. See assemble.CHARS_PER_TOKEN.
 CHARS_PER_TOKEN = assemble.CHARS_PER_TOKEN
@@ -83,9 +94,11 @@ def main() -> int:
     n_gen = len(qs) * len(assemble.ARMS) + len(curve_qs) * len(assemble.CURVE_BUDGETS)
     total_out = ASSUMED_OUTPUT_TOKENS * n_gen
     print(f"\nTOTAL, ARMS PLUS CURVE: {n_gen:,} generations")
-    print(f"input tokens  {total_in:>12,.0f}")
+    print(f"input tokens  {total_in:>12,.0f}  "
+          f"(rendered here, not estimated)")
     print(f"output tokens {total_out:>12,.0f}  "
-          f"(measured mean from a completed run)")
+          f"({ASSUMED_OUTPUT_TOKENS}/generation ASSUMED, not measured -- no "
+          f"output exists until the run does)")
     print()
     for name, (cin, cout) in RATES.items():
         cost = total_in / 1e6 * cin + total_out / 1e6 * cout

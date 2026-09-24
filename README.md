@@ -12,7 +12,7 @@ invisible to every quality metric you have.
 
 A learning project. Every figure is read from a shipped results file rather than
 written into the prose, and the predictions were fixed before the runs. The one
-the runs refuted is still here, still refuted.
+the runs did not support is still here, stated as strongly as it was made.
 
 What you need to run everything except the paid sweeps: `python3`. No container,
 no database, no service, no network. The test suite finishes in seconds and the
@@ -61,35 +61,53 @@ Field-level accuracy, paired by question, bootstrap interval over questions.
 
 | condition | Claude | Claude replicate | GPT | what it removes |
 |---|---|---|---|---|
-| no context | 0.0 | 0.0 | 0.0 | the floor |
-| unpoliced | 99.6 | 98.7 | 97.1 | the field policy |
-| diluted | 98.7 | 99.2 | **95.8** | selectivity, not content |
-| nostructure | **98.3** | 99.2 | 97.5 | key/value form, same facts |
+| no context | **0.0** | **0.0** | **0.0** | the floor |
+| unpoliced | **99.6** | 98.7 | 97.1 | the field policy |
+| diluted | 98.7 | 99.2 | 95.8 | selectivity, not content |
+| nostructure | 98.3 | 99.2 | 97.5 | key/value form, same facts |
 | resolved (baseline) | 97.5 | 98.7 | 97.9 | nothing |
 | perfect | 97.1 | 97.5 | 97.1 | everything irrelevant |
-| stale | **94.1** | 93.3 | **92.0** | 30 days on volatile fields |
-| governed | **93.3** | 95.4 | **94.5** | precision, via a privacy transform |
-| unresolved | **77.7** | 81.1 | **84.0** | entity resolution |
-| incomplete | **57.6** | 57.1 | **56.3** | 40 percent of available fields |
+| stale | **94.1** | **93.3** | **92.0** | 30 days on volatile fields |
+| governed | **93.3** | **95.4** | **94.5** | precision, via a privacy transform |
+| unresolved | **77.7** | **81.1** | **84.0** | entity resolution |
+| incomplete | **57.6** | **57.1** | **56.3** | 4 of the 9 available fields, 44.4 percent |
+
+A bold cell means one thing and is checked: that condition's 95 percent paired
+interval EXCLUDES ZERO in that column's own run, which is the same set of rows
+`scripts/report.py` marks with `*`. It is a claim about separation from the
+baseline within a single run. It is not a claim about the size of the effect,
+and it is not a claim that the separation replicates: the `unpoliced` cell is
+bold on Claude and not on the replicate of the identical configuration, as the
+section below explains. `scripts/check_readme_numbers.py` derives the bold set
+from the shipped rows and fails if this table disagrees with it, so the
+emphasis cannot drift back into decoration.
 
 ## The most important number here is not in that table
 
-The same configuration run twice moves by up to 3.4 POINTS, mean 1.05 across the
-ten conditions. There is ONE generation per cell, so the bootstrap resamples
+The same configuration run twice moves by up to 3.4 POINTS, mean 1.05 across
+the 10 conditions. There is ONE generation per cell, so the bootstrap resamples
 questions and captures NONE of the model's own run-to-run variance. The
 intervals in `scripts/report.py` therefore understate the true uncertainty, and
 this replicate is how much by.
 
 Measured against that, the effects sort into two groups and only one of them
-is safe to call established:
+is safe to call established. EVERY FIGURE IN THIS SECTION IS A MICRO-d: field%
+minus the baseline's field%, every FIELD weighted equally. The intervals
+referred to are computed on the PAIRED-d, which weights every QUESTION equally
+and is a different number; `scripts/report.py` prints both side by side and
+its footer says to quote which one you mean, so this section does.
 
-  ROBUST. Incompleteness (-39.9 and -41.6 across runs) and unresolved entities
-  (-19.7 and -17.6). Both are an order of magnitude larger than the drift, and
-  both replicate across the two vendors as well.
+  ROBUST. Incompleteness (micro-d -39.9 and -41.6 across the two Claude runs)
+  and unresolved entities (micro-d -19.7 and -17.6). Both are an order of
+  magnitude larger than the drift, and both replicate across the two vendors as
+  well. READ THE LIMITATION ON THE UNRESOLVED ARM BELOW BEFORE QUOTING ITS
+  MAGNITUDE: about half of it is an identifier artifact, and the corrected
+  figure is roughly -11.
 
-  Not established. Governance (-4.2 and -3.4) and staleness are the same size as
-  the between-run movement of the baseline itself. Their intervals exclude zero
-  WITHIN a run and that is not enough. Treat them as suggestive.
+  Not established. Governance (micro-d -4.2 and -3.4; paired-d -3.7 and -3.3)
+  and staleness are the same size as the between-run movement of the baseline
+  itself. Their PAIRED intervals exclude zero WITHIN a run and that is not
+  enough. Treat them as suggestive.
 
   No effect. Dilution, prose rendering and the policy bypass move in both
   directions across runs.
@@ -100,7 +118,58 @@ both cost far more than presentation. That is a property of context rather than
 of one model, and a single-vendor single-run study could not have separated the
 two.
 
-## The prediction that was refuted
+## The unresolved arm changes two things, and one of them is an artifact
+
+Every other section of this document rests on one rule, stated at the top of
+`cqa/assemble.py`: ONE ARM CHANGES ONE THING. The `unresolved` arm breaks it,
+and about half of its published effect is the breakage rather than the
+property it is named for.
+
+22 of the 150 question texts name an agreement by the identifier the RESOLVED
+view gives it ("agreement CTR014 at Northwind Health Partners"), because an
+organization holding two contracts makes "the renewal date" ambiguous and an
+ambiguous question measures nothing. CTRnnn is INTERNAL TO THE WORLD. CRM_A
+renames it to AGR-nnn, CRM_B gives its deals numeric ids of their own, and the
+unresolved arm renders raw source rows. So in all 22 of those contexts the
+literal identifier the question names is ABSENT.
+
+The model behaves correctly and the measurement does not. On those 22 questions
+`unresolved` scores 14.3 (Claude), 21.4 (replicate) and 39.3 (GPT) percent
+against a baseline of 100.0 on all three, and on the Claude run 21 of the 24
+failing fields are NULLS: the model looked for the agreement it was asked
+about, did not find it, and declined to answer instead of guessing. That is a
+failure of IDENTIFICATION, not of entity resolution.
+
+Excluding those 22 questions, the arm's micro-d against the baseline is
+-11.0 (Claude), -9.5 (replicate) and -7.6 (GPT), against the -19.7, -17.6 and
+-13.9 the table above reports for all 150. Every one of those figures is
+derived from the shipped rows by `scripts/check_readme_numbers.py`.
+
+WHAT SURVIVES, AND IT IS MOST OF THE CLAIM. The corrected effect is still
+three times the 3.4-point run-to-run drift, still separates on all three runs,
+still replicates across two vendors, and is still ordered behind
+incompleteness, which is the transferable claim this repository makes. What
+does not survive is the magnitude: quote roughly -11 and not -19.7 for the cost
+of losing entity resolution, and treat the table's `unresolved` row as an upper
+bound.
+
+WHY IT IS DISCLOSED AND NOT CHANGED. Removing it means changing the question
+text, and the question text is inside `questions.fingerprint`, which every one
+of the 5,580 shipped generations is stamped with. Changing it makes the report
+refuse every row in `results/`, correctly, and the only way back is to pay for
+three more runs. Disclosure plus a gate costs a reader one paragraph; the
+alternative costs the evidence.
+
+THE GATE. `scripts/preflight.py` checks that every arm states the identifiers
+its questions name, exempting exactly three that cannot: `none`, which renders
+nothing; `incomplete`, which drops fields as its whole mechanism; and
+`unresolved`, which is this confound and is named in the exemption. A fourth
+arm acquiring the same flaw fails the pre-flight. It also checks that the
+unresolved arm loses EVERY named identifier rather than some, because the
+correction above excludes all 22 and that arithmetic is only right if the loss
+is total.
+
+## The prediction that was not supported
 
 Recorded before any run: that accuracy would rise, flatten, and then DECLINE
 as the context budget grew, because answer-bearing facts get diluted.
@@ -156,15 +225,48 @@ claim that is exactly true beats a broad one resting on an uncalibrated judge.
 | A verdict on the budget prediction keys on the direction of the difference, not on mere separation | `tests/test_harness.py::test_the_curve_verdict_requires_the_difference_to_point_the_right_way` |
 | Results recorded by different code cannot be reported | `tests/test_harness.py::test_the_report_refuses_results_that_do_not_match_the_code` |
 | A comparison that cannot be made does not print as a measured zero | `tests/test_harness.py::test_a_comparison_that_cannot_be_made_does_not_print_as_a_zero` |
+| Results recorded under a different PROMPT cannot be reported either | `tests/test_harness.py::test_the_report_refuses_results_recorded_under_a_different_prompt` (mutation-checked: switch the gate off with `if False:` and this fails; rewriting the first rule of `prompt.SYSTEM` fails the shipped-results guard below) |
+| Results recorded by a different ARM ASSEMBLY cannot be reported, and the arm is named | `tests/test_harness.py::test_the_report_refuses_an_arm_whose_assembly_no_longer_matches` (mutation-checked: `if stale_arms:` to `if False:` and it fails) |
+| The shipped results still describe the code that renders them | `tests/test_harness.py::test_the_shipped_results_still_describe_the_code_that_renders_them` (mutation-checked: any change to an arm's assembly fails it) |
+| The interval is computed from the data, not printed around the estimate | `tests/test_harness.py::test_the_interval_is_computed_and_not_merely_printed` (mutation-checked: an interval of zero width fails it) |
+| The incomplete condition drops the number of fields it advertises, on every question | `tests/test_harness.py::test_the_incomplete_arm_drops_the_count_it_advertises_on_every_question` |
+| The unresolved condition's identifier confound is exactly what this document discloses | `tests/test_harness.py::test_the_unresolved_arms_identifier_confound_is_exactly_as_disclosed` (mutation-checked in both directions) |
+| One price table, and every consumer reads it | `tests/test_harness.py::test_one_price_table_and_every_consumer_reads_it` (mutation-checked: a second copy of the price fails it) |
+| The default credential path is ignored by git | `tests/test_harness.py::test_the_default_credential_path_is_ignored_by_git` (mutation-checked: drop `.env` from `.gitignore` and it fails) |
+| A fingerprint over no questions is refused rather than returned | `tests/test_harness.py::test_a_fingerprint_over_no_questions_is_refused_rather_than_returned` |
+| Each gate returns the verdict CI acts on | `tests/test_harness.py::test_the_figure_checker_main_returns_a_verdict_ci_can_act_on`, `tests/test_harness.py::test_the_preflight_main_returns_a_verdict_ci_can_act_on` (mutation-checked: flip either non-zero return to 0 and they fail) |
 
-The 34 figures in the tables above are rebuilt from the shipped results by
-`scripts/check_readme_numbers.py`, which CI runs. What it does is a substring
-test: it derives each figure and requires the exact string to appear somewhere
-in this file. It cannot tell a right number in a wrong cell, and it does not
-check the intervals, the paired statistics, or the token ratio, which are
-verified by reading `results/*.jsonl` directly. It reports how many figures it
-derived, so a version that quietly stopped checking half of them is visible
-rather than clean.
+Every parenthetical above names a mutation that is recorded rather than
+asserted, AND THAT YOU CAN RE-RUN. `scripts/mutation_suite.py` holds all 30
+entries and applies them one at a time: it patches the real file, runs the
+single test that is supposed to catch the edit, requires that test to go red,
+and puts the file back. CI runs it on every push.
+
+It refuses to start instead of reporting a green sweep it did not earn: if an
+entry's target text has left its file, if a named test no longer collects, or
+if a named test does not pass ON ITS OWN before anything is patched, because
+each of those makes an entry score by something other than the mutation. An
+interrupted run is repairable: the original is copied outside the tree and its
+hash recorded before the patch is written, the catchable signals restore and
+re-raise, and the next run puts back what a kill left behind.
+
+The 63 figures in this document are rebuilt from the shipped results by
+`scripts/check_readme_numbers.py`, which CI runs, and it checks them three
+ways. The 30 condition-table cells are compared BY POSITION: the cell for an
+arm and a run is compared against that arm's accuracy in that run, so a right
+number in a wrong cell fails. Each bold cell is compared against whether that
+condition's interval actually excludes zero, through the same function
+`scripts/report.py` marks `*` with. Every other figure is matched together with
+enough of its own sentence to make the match mean something: a bare string is
+not evidence when the value is short or common, because `0`, `150` and `1860`
+appear in any plausible README and a figure that cannot fail must not be
+counted among the ones that can.
+
+What it still does not check: the intervals themselves, the paired statistics
+and the token ratio, which are verified by reading `results/*.jsonl` directly.
+It reports how many figures it derived, and that count is one of the figures,
+so a version that quietly stopped deriving half of them cannot leave this
+sentence looking clean.
 
 The two cost figures are MODELED from token counts and published prices, not
 read off a bill.
@@ -177,7 +279,10 @@ python3 -m pytest -q                  # the test suite
 python3 scripts/report.py             # renders the shipped Claude results
 python3 scripts/report.py results/sweep_openai.jsonl
 python3 scripts/check_readme_numbers.py
+python3 scripts/mutation_suite.py     # breaks the code and requires a test to notice
 ```
+
+CI runs every one of them on every push.
 
 The paid sweeps cost $5.47 and $3.46, plus a replicate. They are not needed to
 check anything above except the model's answers themselves, which ship in
@@ -201,23 +306,58 @@ way it checks the arms, and the rows already on disk were backfilled by
 `arm_fingerprint_backfilled`. As below, that is an assertion that the code did
 not change, not a measurement that it did not.
 
-Second, the replicate. `results/sweep.jsonl` and `results/sweep_openai.jsonl`
-had every ARM row stamped at write time. `results/sweep_replicate.jsonl`
-predates the per-condition hash entirely, so 1,350 of its rows carry that hash
-written AFTERWARD and say so in a field of their own,
-`arm_fingerprint_backfilled`. That is an assertion rather than a measurement,
-and it is why the report re-checks every one of them against the live code
-before aggregating anything.
+Second, the replicate, AND IT IS NOT ONE RUN OF ONE CONFIGURATION.
+`results/sweep.jsonl` and `results/sweep_openai.jsonl` had every ARM row
+stamped at write time. `results/sweep_replicate.jsonl` is a splice of two, and
+the rows say so:
 
-Its `perfect` rows are the exception in the other direction: all 150 were
-stamped AT WRITE TIME and their hash matches what this code produces now, with
-no backfill marker on any of them. That is the strongest provenance anything
-in `results/` carries, so `perfect` sits inside the between-run comparison like
-every other row.
+- 150 `perfect` rows carry a hash written AT WRITE TIME, with no backfill
+  marker, and it matches what this code produces now. They were therefore
+  produced by code that already had the per-condition hash.
+- the other 1,350 arm rows, and all 360 curve rows, carry
+  `arm_fingerprint_backfilled` and were stamped AFTERWARD. They were produced
+  by code that did not have it.
+
+"Predates the per-condition hash entirely" and "its `perfect` rows were
+stamped at write time" CANNOT BOTH BE TRUE OF ONE RUN, and the rows agree with
+the second: the file is one configuration measured in two sittings, under two
+revisions of this code. A backfilled hash is an ASSERTION that the assembly
+did not change between them, not a measurement that it did not. The report
+therefore re-checks every row against the live code before aggregating
+anything, and a reader who does not accept the assertion can drop the 1,710
+marked rows and lose the comparison instead of being misled by it.
+
+No row in this file carries a `provider` field; the other two runs carry one on
+every row. Nothing reads it (`report.py` and `check_readme_numbers.py` both
+key on the FILE), so it costs nothing today; it is one more difference between
+this file and the two runs it is compared against.
 
 The replicate ships because a second run of the same configuration is the only
 thing here that measures run-to-run variance, and hiding it would be worse than
 disclosing what is weak about it.
+
+Third, the PROMPT hash, which is the newest of the three stamps and the one
+every shipped row carries as an assertion. Model, prompt and question set are
+what this experiment holds constant while context varies; the question set and
+the condition were hashed onto every row when it was written and the prompt was
+not, so `scripts/report.py` now refuses on it too and the 5,580 rows already on
+disk were stamped afterwards by `scripts/backfill_prompt_fingerprint.py`.
+
+What that asserts is narrow: everything the template INTERPOLATES (the
+question, its as-of date, its answer schema) is already inside
+`questions_fingerprint`, which those rows carry from write time. What is
+asserted is the wording of the template itself.
+
+AND THE ROWS CANNOT CHECK IT, as a measurement shows. Each row records the
+vendor's own input-token count, so input tokens were regressed on today's
+rendered characters; residual spread is 15.9 tokens on the Claude floor arm and
+28.1 across its arms. Re-rendering with 40 more characters in the system prompt
+leaves that spread at exactly 1.00x, because a constant edit is absorbed by the
+intercept, and re-indenting the schema block leaves it between 0.96x and 1.00x,
+because a per-question edit is smaller than the tokenizer noise it would have
+to clear. So the report prints how many rows carry an after-the-fact hash,
+above every table, and calls it an assertion. Only a re-run replaces it with a
+measurement.
 
 ## What this does not measure
 
