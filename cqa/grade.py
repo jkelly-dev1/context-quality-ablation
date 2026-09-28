@@ -13,10 +13,10 @@ What is normalized, and nothing else:
               dropped. Internal punctuation is KEPT, so "O'Neill" and
               "ONeill" are different answers, which is correct.
 
-What is not normalized, deliberately: nothing is fuzzy-matched, no edit
-distance, no substring credit. A near miss is a miss. That keeps the metric a
-measurement of the model's factual accuracy rather than of the grader's
-generosity, and it is why the score can be compared across arms at all.
+What is not normalized: nothing is fuzzy-matched, no edit distance, no
+substring credit. A near miss is a miss. That keeps the metric a measurement of
+the model's factual accuracy rather than of the grader's generosity, and it is
+why the score can be compared across arms at all.
 """
 from __future__ import annotations
 

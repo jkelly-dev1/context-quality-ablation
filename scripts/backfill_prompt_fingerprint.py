@@ -69,17 +69,25 @@ def main() -> int:
     for path in (Path(p) for p in sys.argv[1:]):
         rows = [json.loads(x) for x in path.read_text().splitlines()
                 if x.strip()]
-        touched = already = 0
+        touched = already = stale = 0
         for r in rows:
-            if r.get("prompt_fingerprint") == live:
+            stamp = r.get("prompt_fingerprint")
+            if stamp == live:
                 already += 1
+                continue
+            if stamp is not None:
+                # Stamped under a different prompt. Overwriting it would
+                # erase the evidence the report refuses stale rows on.
+                stale += 1
                 continue
             r["prompt_fingerprint"] = live
             r["prompt_fingerprint_backfilled"] = True
             touched += 1
         path.write_text("".join(json.dumps(r) + "\n" for r in rows))
         print(f"{path}: {touched} rows backfilled with prompt {live}"
-              + (f", {already} already stamped at write time" if already else ""))
+              + (f", {already} already stamped with it" if already else "")
+              + (f", {stale} stamped with another prompt and left for the "
+                 f"report to refuse" if stale else ""))
     return 0
 
 

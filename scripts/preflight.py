@@ -65,7 +65,7 @@ def oracle(q, context: str) -> dict:
     # The pattern lives in cqa.questions, which is where the id is written.
     # A second copy here would be one more thing to keep in step, and the
     # checks below decide a published figure by it.
-    named = questions.names_internal_id(q)
+    named = questions.names_agreement_start(q)
     if named:
         blocks = re.split(r"^\s*- \[\d+\]\s*$", context, flags=re.M)
         context = next((b for b in blocks if named in b), context)
@@ -87,6 +87,67 @@ def oracle(q, context: str) -> dict:
         want = alias.get(key)
         out[key] = stated[want][0] if want and want in stated else None
     return out
+
+
+# Answer keys a source system did not show on the date asked. Empty since
+# 2026-09-26, when questions.shown_contract_value made every contract key the
+# value a source showed; C009, keyed by world truth no pipeline could reach,
+# was the one entry here. A new case fails the check.
+KNOWN_UNSHOWN: set[str] = set()
+_CONTRACT_KEYS = {"renewal_date", "days_until_renewal", "acv", "total_acv"}
+
+
+def contract_keys_not_shown(w, qs) -> list[str]:
+    """Questions whose contract figures no source system showed on the date.
+
+    Checked per contract, derived keys included: the renewal date behind a
+    day count, and the acv of every contract behind a total. Each field may
+    come from either system, because merging them is what resolution does,
+    but it must come from the contract the question names.
+    """
+    import itertools
+    from datetime import date
+    idx = {k["contract_id"]: m for m, k in enumerate(w.contracts)}
+
+    def shown(k, a, b):
+        agr = k["contract_id"].replace("CTR", "AGR-")
+        out = [(date.fromisoformat(r["renews_on"]), r["annual_value_usd"])
+               for r in a["agreements"] if r["agreement_id"] == agr]
+        out += [(date.fromisoformat(r["renewal"]), r["value"])
+                for r in b["deals"] if r["deal_id"] == 9000 + idx[
+                    k["contract_id"]]]
+        return out
+
+    bad = []
+    for q in qs:
+        keys = set(q.answer) & _CONTRACT_KEYS
+        if not keys:
+            continue
+        a, b = sources.crm_a(w, q.as_of), sources.crm_b(w, q.as_of)
+        ks = w.contracts_for(q.org_id, q.as_of)
+        if "total_acv" in keys:
+            opts = [{v for _, v in shown(k, a, b)} for k in ks]
+            ok = any(sum(c) == q.answer["total_acv"]
+                     for c in itertools.product(*opts))
+        else:
+            named = questions.names_agreement_start(q)
+            k = next((k for k in ks if named
+                      and k["start_date"].isoformat() == named),
+                     ks[0] if len(ks) == 1 else None)
+            vals = shown(k, a, b) if k else []
+            ok = bool(vals)
+            if "renewal_date" in keys:
+                ok &= any(rd.isoformat() == q.answer["renewal_date"]
+                          for rd, _ in vals)
+            if "days_until_renewal" in keys:
+                ok &= any((rd - q.as_of).days
+                          == q.answer["days_until_renewal"]
+                          for rd, _ in vals)
+            if "acv" in keys:
+                ok &= any(v == q.answer["acv"] for _, v in vals)
+        if not ok:
+            bad.append(q.qid)
+    return bad
 
 
 def check(results: list, name: str, ok: bool, detail: str = "") -> None:
@@ -145,8 +206,12 @@ def layer1(w, qs, values) -> list:
              if assemble.context_for(w, q, "none").strip()
              or any(v in prompt.user_message(q, "")
                     for v in questions.distinctive_answer_values(q))]
+    n_searched = sum(len(questions.distinctive_answer_values(q)) for q in qs)
+    n_values = sum(len(q.answer) for q in qs)
     check(r, "the floor arm carries no context and no answer in its prompt",
-          not leaky, f"{len(leaky)} prompts contain their own answer")
+          not leaky, f"{len(leaky)} prompts contain their own answer "
+          f"({n_searched} of {n_values} answer values are strings long "
+          f"enough to search)")
 
     derived = {"total_acv", "days_until_renewal", "organizations",
                "stage_changes", "agreements", "source_records"}
@@ -214,48 +279,34 @@ def layer1(w, qs, values) -> list:
 
     # Every arm must be able to identify what it is asked about.
     #
-    # The check above is about answer values. This one is about the ids the
-    # question text names. 22 of the 150 questions name an agreement by the
-    # world's internal id ("agreement CTR014 at Northwind"), which neither
-    # source system carries, and the unresolved arm renders raw source rows.
-    # In those 22 contexts the literal id the question names is absent, the
-    # model correctly answers null, and about half that arm's published effect
-    # is a failure of identification, not of resolution: that arm changes two
-    # things, which README.md discloses.
+    # The check above is about answer values. This one is about how the
+    # question names an agreement when its organization holds two. 22 of the
+    # 150 questions do, and they name it by start date, which both source
+    # systems carry, and never by the world's internal id, which neither does.
     #
-    # Three arms may legitimately lose an identifier, and each is exempt for a
-    # reason that is its own named mechanism rather than an oversight:
+    # Two arms may legitimately lose the name, each for a reason that is its
+    # own mechanism rather than an oversight:
     ID_EXEMPT = {
         "none": "renders no context at all, which is the floor's definition",
         "incomplete": "drops a fixed number of top-level fields, which is the "
                       "property it measures; the agreements block is "
                       "sometimes among them",
-        "unresolved": "renders raw source rows, and no source system carries "
-                      "the internal id -- THE DISCLOSED CONFOUND, see README",
     }
-    named = [(q, questions.names_internal_id(q)) for q in qs]
-    named = [(q, cid) for q, cid in named if cid]
+    named = [(q, questions.names_agreement_start(q)) for q in qs]
+    named = [(q, d) for q, d in named if d]
     lost = []
     for arm in assemble.ARMS:
         if arm in ID_EXEMPT:
             continue
-        for q, cid in named:
-            if cid not in assemble.context_for(w, q, arm):
-                lost.append((q.qid, arm, cid))
-    check(r, "every arm states the identifiers its questions name, except the "
-          "three that cannot", not lost,
-          f"{len(lost)} lost across {len(assemble.ARMS) - len(ID_EXEMPT)} arms")
-
-    # The disclosed confound must be all-or-nothing. README.md excludes the
-    # whole set of identifier-naming questions when it restates the unresolved
-    # effect, and that arithmetic is only right if the arm loses every one of
-    # them, not some. A partial loss would need a different correction and
-    # would make the published one wrong.
-    kept = [q.qid for q, cid in named
-            if cid in assemble.context_for(w, q, "unresolved")]
-    check(r, "the unresolved arm loses every named identifier, not some",
-          not kept and bool(named),
-          f"{len(named)} questions name one, {len(kept)} still identifiable")
+        for q, d in named:
+            if d not in assemble.context_for(w, q, arm):
+                lost.append((q.qid, arm, d))
+    check(r, "every arm states the agreement its questions name, except the "
+          "two that cannot", not lost and bool(named),
+          f"{len(named)} questions name one; {len(lost)} lost across "
+          f"{len(assemble.ARMS) - len(ID_EXEMPT)} arms")
+    check(r, "no question names an agreement by the world's internal id",
+          not any(questions.names_internal_id(q) for q in qs))
 
     # The key must be obtainable from a source system. A baseline that states
     # a value neither CRM carries is reading world truth no pipeline could
@@ -269,8 +320,13 @@ def layer1(w, qs, values) -> list:
                 continue
             if str(want) not in blob:
                 unobtainable.append((q.qid, key, want))
-    check(r, "every answer key is obtainable from a source system",
+    check(r, "every non-derived answer key appears in a source system",
           not unobtainable, f"{len(unobtainable)} unobtainable")
+    unshown = contract_keys_not_shown(w, qs)
+    check(r, "contract keys, derived ones too, are what a source showed",
+          set(unshown) == KNOWN_UNSHOWN,
+          f"not shown: {', '.join(unshown) or 'none'}; disclosed: "
+          f"{', '.join(sorted(KNOWN_UNSHOWN)) or 'none'}")
     return r
 
 
@@ -355,12 +411,12 @@ def layer2(w, qs, base_url: str, model: str) -> list:
         try:
             ans, _ = ask_local(base_url, model, q,
                                assemble.context_for(w, q, "perfect"))
+            none_ans, _ = ask_local(base_url, model, q,
+                                    assemble.context_for(w, q, "none"))
         except (urllib.error.URLError, OSError, KeyError) as exc:
             check(r, "local endpoint reachable", False, str(exc)[:60])
             return r
         parsed += isinstance(ans, dict) and set(ans) >= set(q.answer)
-        none_ans, _ = ask_local(base_url, model, q,
-                                assemble.context_for(w, q, "none"))
         if isinstance(none_ans, dict) and all(
                 v in (None, "", "null") for v in none_ans.values()):
             floor_ok += 1

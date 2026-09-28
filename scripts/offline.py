@@ -1,9 +1,11 @@
 """Render every prompt the sweep would send, and cost it, without sending one.
 
-This is the step that makes the budget a measurement rather than an estimate.
-It builds every prompt, counts their characters, and prints what the run
-will cost at the rates the operator approved. Nothing here touches the
-network and nothing here needs a credential.
+It builds every prompt, counts their characters, and estimates the tokens and
+the cost at the rates the operator approved. The characters are measured; the
+tokens are those characters divided by assemble.CHARS_PER_TOKEN. The shipped
+Claude run billed 2,394,166 input tokens against this estimate's 2,161,894,
+which is 11 percent more. Nothing here touches the network and nothing here needs a
+credential.
 
     python3 scripts/offline.py
 """
@@ -29,8 +31,8 @@ RATES = {
     "sonnet-5 batch": (_STD[0] / 2, _STD[1] / 2),
 }
 # Output is a small JSON object. This is an assumption, not a measurement, and
-# the print below says so in those words. The completed runs report means of
-# 37.0 (Claude) and 28.7 (GPT) output tokens, so this over-estimates and the
+# the print below says so in those words. The shipped runs report means of
+# 35.9 (Claude) and 28.0 (GPT) output tokens, so this over-estimates and the
 # estimate it feeds is therefore an upper bound and not a central one, which
 # is the direction a budget approval wants to be wrong in. It is not
 # replaced by either measured mean because this script runs BEFORE a run, for
@@ -95,7 +97,7 @@ def main() -> int:
     total_out = ASSUMED_OUTPUT_TOKENS * n_gen
     print(f"\nTOTAL, ARMS PLUS CURVE: {n_gen:,} generations")
     print(f"input tokens  {total_in:>12,.0f}  "
-          f"(rendered here, not estimated)")
+          f"(estimated from rendered characters)")
     print(f"output tokens {total_out:>12,.0f}  "
           f"({ASSUMED_OUTPUT_TOKENS}/generation ASSUMED, not measured -- no "
           f"output exists until the run does)")

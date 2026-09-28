@@ -4,10 +4,10 @@ One template, every arm. If the instruction changed between arms the
 experiment would be measuring prompting, not data. The only text that differs
 between two arms is the block returned by assemble.context_for.
 
-The task is deliberately framed so that a model with no context should refuse
-rather than guess. An arm-0 score above noise means the questions are
-answerable from general knowledge, which would mean the entities are not
-synthetic enough and the whole ablation is measuring fluency.
+The task is framed so that a model with no context should refuse rather than
+guess. An arm-0 score above noise means the questions are answerable from
+general knowledge, which would mean the entities are not synthetic enough and
+the whole ablation is measuring fluency.
 """
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def fingerprint(qs) -> str:
 
 
 def answer_schema(q: Question) -> dict:
-    """A strict object schema, so the answer arrives parsed rather than read.
+    """A strict object schema, so the answer arrives already parsed.
 
     Values are typed as string-or-number-or-null rather than tightly, because
     a model forced to emit an integer for a field it does not know cannot

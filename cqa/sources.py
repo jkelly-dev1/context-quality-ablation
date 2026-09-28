@@ -48,7 +48,7 @@ def _as_of(w: World, entity: str, entity_id: str, fname: str,
     use_recorded is the difference between the two systems. CRM_A applies a
     change when it LEARNS of it, which is what a system fed by an event stream
     does. CRM_B applies it by effective date but only up to its own lagging
-    refresh. Neither is wrong on purpose; they are wrong in different ways,
+    refresh. Neither is wrong; they are wrong in different ways,
     which is what makes survivorship a decision.
     """
     value = base

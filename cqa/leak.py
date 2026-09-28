@@ -30,8 +30,11 @@ SHAPE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 # only the exact stored string means "123-45-6789" is caught and "123456789"
 # or "123 45 6789" is not, so the same value reaching the same reader counts
 # as a leak or not depending on formatting the detector has no business
-# caring about. Digits are compared with separators removed.
-SEPARATORS = re.compile(r"[\s.-]")
+# caring about. Digits are compared with separators removed: whitespace, dot,
+# hyphen, slash, the _ character and parentheses. Not every non-digit, because
+# joining digits across arbitrary text would find a nine-digit run in two
+# unrelated numbers.
+SEPARATORS = re.compile(r"[\s./_()-]")
 
 
 def _digits(text: str) -> str:

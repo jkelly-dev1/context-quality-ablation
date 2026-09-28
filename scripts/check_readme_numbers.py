@@ -1,6 +1,7 @@
-"""Rebuild every figure in README.md from the shipped results and compare.
+"""Rebuild README.md's figures from the shipped results and compare.
 
     python3 scripts/check_readme_numbers.py
+    python3 scripts/check_readme_numbers.py --emit    print each row and its match
 
 Why this exists. A number typed into prose is a copy, and a copy drifts from
 its source without anything failing. This rebuilds each figure from
@@ -20,16 +21,31 @@ There are three kinds of check, and the difference between them matters.
 
   IN CONTEXT. A figure in a sentence is matched with enough of the sentence
   around it to make the match mean something. A bare string is not evidence
-  when the value is short or common: "0", "150" and "1860" appear in any
-  plausible README, so requiring only the bare value would count figures that
-  cannot fail among the ones that can. Every figure whose bare value is short
-  or common therefore carries a pattern, and a figure with no pattern is one
-  whose value is distinctive on its own, a cost like "$5.47".
+  when the value is short or common: zero, the question count and the
+  generation count appear in any plausible README, so requiring only the bare
+  value would count figures that cannot fail among the ones that can. Every
+  figure whose bare value is short or common therefore carries a pattern, and
+  a figure with no pattern is one whose value is distinctive on its own, a
+  dollar cost.
 
 It prints how many figures it checked, whether or not any are missing, so a
-version that quietly stopped deriving half of them is visible instead of clean.
+version that silently stopped deriving half of them is visible instead of clean.
 That count is itself one of the figures, so README.md and SAMPLE_RUN.md cannot
-go on quoting a count from a version of this file that derived fewer.
+go on quoting a count from a version of this file that derived fewer. Rows that
+several runs derive identically (the same value in the same sentence) are
+counted once, so the count is the number of distinct checks.
+
+What it does not rebuild from the shipped rows: the 95 in "95 percent", which
+defines the interval, and the figures of the runs these replaced, whose rows
+no longer ship: their largest run-to-run drift, 3.4, and their unresolved-arm
+micro-d, -19.7, -17.6 and -13.9. README.md labels each of those as the
+replaced runs' figure. They are held below as constants, so an edit to them in
+README.md still fails this check, but no shipped row re-derives them. `--emit`
+prints every row with the text it matched, so what is covered can be measured.
+
+The same run checks the few figures PREDICTIONS.md and GITHUB_DESCRIPTION.txt
+state, and prints their count on a line of its own, so the README's count
+stays the count of what the README states.
 
 Exit status is 0 when every derived figure appears and 1 otherwise.
 """
@@ -40,6 +56,7 @@ import random
 import re
 import sys
 from collections import defaultdict
+from fractions import Fraction
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,7 +71,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # drift it was built to find.
 import report                                             # noqa: E402
 import sweep                                              # noqa: E402
-from cqa import assemble, questions, world                # noqa: E402
+from cqa import assemble, questions, sources, world       # noqa: E402
 
 README = ROOT / "README.md"
 RUNS = {"anthropic": ROOT / "results" / "sweep.jsonl",
@@ -65,6 +82,13 @@ RUNS = {"anthropic": ROOT / "results" / "sweep.jsonl",
         # prose were outside the only thing that compares prose to evidence.
         "replicate": ROOT / "results" / "sweep_replicate.jsonl"}
 BASE = "resolved"
+
+# The figures of the runs these replaced, which README.md quotes as such. Their
+# rows are in git history, not in results/, so nothing here can re-derive them;
+# they are constants so that README.md cannot restate them differently.
+REPLACED_MAX_DRIFT = "3.4"
+REPLACED_UNRESOLVED = {"anthropic": "-19.7", "replicate": "-17.6",
+                       "openai": "-13.9"}
 
 # The condition table's own names for the ten arms and the three runs. A table
 # that renamed a row would otherwise silently stop being checked, so an
@@ -93,6 +117,26 @@ def field_pct(rs) -> float:
     c = sum(r["grade"]["n_correct"] for r in rs)
     t = sum(r["grade"]["n_fields"] for r in rs)
     return 100.0 * c / t if t else 0.0
+
+
+def field_frac(rs) -> Fraction:
+    """field_pct as an exact fraction, for comparisons where a tie is a tie."""
+    c = sum(r["grade"]["n_correct"] for r in rs)
+    t = sum(r["grade"]["n_fields"] for r in rs)
+    return Fraction(c, t) if t else Fraction(0)
+
+
+def side(arm_rs, base_rs) -> str:
+    """Where an arm sits against the baseline, in the words README.md uses."""
+    a, b = field_frac(arm_rs), field_frac(base_rs)
+    return "below" if a < b else "above" if a > b else "level with"
+
+
+def budgets_text(budgets) -> str:
+    """[600, 1200] -> "600 and 1,200"."""
+    parts = [f"{b:,}" for b in budgets]
+    return parts[0] if len(parts) == 1 else (", ".join(parts[:-1])
+                                             + " and " + parts[-1])
 
 
 def _arms(path: Path) -> dict:
@@ -153,6 +197,193 @@ def derive_cells() -> dict:
     return out
 
 
+def provenance_figures() -> list[tuple[str, str, str | None]]:
+    """Counts README.md states about the rows themselves and the tree."""
+    import mutation_suite
+    import preflight
+    from datetime import date
+    out: list[tuple[str, str, str | None]] = []
+    every = [r for path in RUNS.values() for r in load(path)]
+    # README.md says no shipped row carries a stamp written after it, which
+    # this derives from the rows' own backfill markers rather than asserts.
+    backfilled = sum(1 for r in every
+                     if any(k.endswith("_backfilled") and v
+                            for k, v in r.items()))
+    out += [("shipped generations", f"{len(every):,}",
+             rf"the {len(every):,} shipped generations"),
+            ("rows carrying a stamp written afterwards",
+             f"{backfilled}/{len(every):,}",
+             rf"{backfilled} of the {len(every):,} generations carries a stamp "
+             rf"written after its row")]
+    rows = load(RUNS["anthropic"])
+    n_curve = sum(r.get("experiment") == "curve" for r in rows)
+    out.append(("curve rows in a run", f"{n_curve}/{len(rows)}",
+                rf"{n_curve} of a run's {len(rows):,} rows, "
+                rf"{100 * n_curve / len(rows):.1f}%"))
+    out += [("mutation entries", str(len(mutation_suite.MUTATIONS)),
+             rf"holds all {len(mutation_suite.MUTATIONS)}"),
+            ("stale window", str(assemble.STALE_DAYS),
+             rf"{assemble.STALE_DAYS} days on volatile fields")]
+    # The words after each peak are derived too: a re-run that moves the
+    # largest budget above or below the peak changes which one is true. Budgets
+    # that tie exactly for the top score are all named, with "(tied)", so a
+    # sentence naming one of them cannot pass for the whole peak.
+    for provider, one, several, down, flat in (
+            ("anthropic", "Claude peaks at a {}-token budget",
+             r"Claude peaks at {} tokens \(tied\)",
+             " and drifts down slightly after", ""),
+            ("openai", "GPT climbs to {}", r"GPT climbs to {} \(tied\)",
+             r"\s+and dips slightly at {}", r"\s+and stops")):
+        peaks, top, dips = curve_shape(provider)
+        lead = (one if len(peaks) == 1 else several).format(budgets_text(peaks))
+        tail = (down if dips else flat).format(f"{top:,}")
+        out.append((f"{provider} curve peak", "/".join(map(str, peaks)),
+                    lead + tail))
+    return out
+
+
+def curve_unstarted_deal_contexts() -> list[tuple[str, int]]:
+    """(qid, budget) for every curve context that carries the asked
+    organization's CRM_B deal for a contract not started on the date asked.
+
+    The curve's ranking filters both systems' agreements and deals by start
+    date, so on the shipped code this is empty. README.md states the count it
+    returns, so a ranking that stopped filtering either system fails here.
+    """
+    w = world.build()
+    out = []
+    for q in questions.curve_subset(questions.build(w)):
+        deals = {f"deal_id: {9000 + m}" for m, k in enumerate(w.contracts)
+                 if k["org_id"] == q.org_id and k["start_date"] > q.as_of}
+        for bkt in assemble.CURVE_BUDGETS:
+            lines = {ln.strip() for ln in
+                     assemble.curve_context(w, q, bkt).split("\n")}
+            if deals & lines:
+                out.append((q.qid, bkt))
+    return out
+
+
+def renewal_key_figure(w, qs) -> tuple[str, str, str]:
+    """The days-until-renewal key that differs from the world's own renewal.
+
+    For each such question, the contract it asks about is the one whose
+    source-shown renewal gives the key. A key is listed when the world's
+    effective renewal on the date asked gives a different count, which is a
+    correction no source had shown yet. README.md names the one question this
+    reaches and both counts.
+    """
+    differ = []
+    for q in qs:
+        if "days_until_renewal" not in q.answer:
+            continue
+        key = q.answer["days_until_renewal"]
+        truths = []
+        for k in w.contracts_for(q.org_id, q.as_of):
+            cid = k["contract_id"]
+            shown = questions.shown_contract_value(w, cid, "renewal_date",
+                                                   q.as_of)
+            if (shown - q.as_of).days == key:
+                truths.append((w.value_as_of("contract", cid, "renewal_date",
+                                             q.as_of) - q.as_of).days)
+        if truths and key not in truths:
+            differ.append((q.qid, key, truths[0]))
+    if len(differ) != 1:
+        return ("renewal key a source decides", str(differ), r"(?!)")
+    qid, key, truth = differ[0]
+    return ("renewal key a source decides", f"{qid} {key}/{truth}",
+            rf"{qid} is the one question where they differ: the world's "
+            rf"corrected renewal is {truth} days away, and both systems still "
+            rf"showed {key}")
+
+
+def token_figures() -> list[tuple[str, str, str | None]]:
+    """The token figures README.md states, from the rows' own usage counts.
+
+    The unpoliced arm's size is compared with the resolved arm on the same
+    questions. For the vendor ratio, input tokens are pooled over every
+    (question, condition) cell both vendors answered.
+    """
+    out: list[tuple[str, str, str | None]] = []
+    for provider in ("anthropic", "openai"):
+        arms = _arms(RUNS[provider])
+        base = {r["qid"]: r["usage"]["input"] for r in arms[BASE]}
+        unp = {r["qid"]: r["usage"]["input"] for r in arms["unpoliced"]}
+        common = sorted(set(base) & set(unp))
+        diff = sum(unp[q] - base[q] for q in common)
+        tokens = f"{diff / len(common):.0f}"
+        share = 100 * diff / sum(base[q] for q in common)
+        disp = DISPLAY[provider]
+        out.append((f"{provider} unpoliced extra tokens and share",
+                    f"{tokens}/{share:.1f}",
+                    rf"{tokens} tokens larger on the {disp} run, "
+                    rf"{share:.1f} percent"))
+
+    cells = {}
+    for provider in ("anthropic", "openai"):
+        cells[provider] = {(r["qid"], r["arm"]): r["usage"]["input"]
+                           for r in load(RUNS[provider])}
+    both = set(cells["anthropic"]) & set(cells["openai"])
+    ratio = (sum(cells["openai"][k] for k in both)
+             / sum(cells["anthropic"][k] for k in both))
+    out += [("cells both vendors answered", f"{len(both):,}",
+             rf"all {len(both):,} matched cells"),
+            ("GPT to Claude input-token ratio", f"{ratio:.2f}",
+             rf"used {ratio:.2f} times the input tokens")]
+    return out
+
+
+def curve_shape(provider: str) -> tuple[list[int], int, bool]:
+    """(peak budgets, largest budget, whether the largest scores below the peak).
+
+    Every budget that ties for the top score is a peak, in budget order. The
+    scores are compared as exact fractions, so a tie is a tie and not whichever
+    budget a sort put first.
+    """
+    by_b = defaultdict(list)
+    for r in load(RUNS[provider]):
+        if r.get("experiment") == "curve":
+            by_b[int(r["arm"].replace("budget", ""))].append(r)
+    score = {b: field_frac(rs) for b, rs in by_b.items()}
+    best = max(score.values())
+    peaks = [b for b in sorted(by_b) if score[b] == best]
+    top = max(by_b)
+    return peaks, top, score[top] < best
+
+
+# The two other documents that state figures. They are checked here, and
+# counted apart from README.md's, so the README's own count stays the count
+# of what the README states.
+OTHER_DOCS = {"PREDICTIONS.md": ROOT / "PREDICTIONS.md",
+              "GITHUB_DESCRIPTION.txt": ROOT / "GITHUB_DESCRIPTION.txt"}
+
+
+def other_documents() -> list[tuple[str, str, str, str]]:
+    """(document, label, derived value, pattern) for PREDICTIONS.md and the
+    repository description."""
+    (pa, _, da), (po, _, do) = curve_shape("anthropic"), curve_shape("openai")
+
+    def level(peaks):
+        # A dip follows the last of a tied peak; the first is named as where
+        # the level stretch begins.
+        return rf" \(level from {peaks[0]:,}\)" if len(peaks) > 1 else ""
+    both = (rf"Both vendors' point estimates dip slightly after their peak, "
+            rf"Claude's after {pa[-1]:,} tokens{level(pa)} and GPT's after "
+            rf"{po[-1]:,}{level(po)}")
+    # A re-run in which either curve stops dipping makes the sentence false
+    # whatever its numbers say, so it can no longer match.
+    dip = both if (da and do) else r"(?!)"
+    n_questions = len(questions.build(world.build()))
+    return [
+        ("PREDICTIONS.md", "both curve peaks, and both curves dipping after",
+         f"{pa[-1]} and {po[-1]}", dip),
+        ("PREDICTIONS.md", "curve questions per budget",
+         str(questions.CURVE_QUESTIONS),
+         rf"{questions.CURVE_QUESTIONS} questions per budget"),
+        ("GITHUB_DESCRIPTION.txt", "questions",
+         str(n_questions), rf"{n_questions} questions"),
+    ]
+
+
 def derive() -> list[tuple[str, str, str | None]]:
     """Every figure the README states in PROSE, as (label, value, pattern).
 
@@ -175,12 +406,16 @@ def derive() -> list[tuple[str, str, str | None]]:
              rf"{leaks} of {leaks} prompts"),
             (f"{provider} clean generations", str(clean),
              rf"{clean} generations"),
-            (f"{provider} output leaks",
-             str(sum(r["governance"]["output_leak"] for r in rows)),
-             r"OUTPUT 0 times"),
-            (f"{provider} inferred leaks",
-             str(sum(r["governance"]["inferred_leak"] for r in rows)),
-             r"permitted fields 0 times"),
+        ]
+        # Built from the derived count, like every other row. A literal
+        # pattern here would match README.md whatever the rows said.
+        n_out = sum(r["governance"]["output_leak"] for r in rows)
+        n_inf = sum(r["governance"]["inferred_leak"] for r in rows)
+        out += [
+            (f"{provider} output leaks", str(n_out),
+             rf"OUTPUT {n_out} times"),
+            (f"{provider} inferred leaks", str(n_inf),
+             rf"permitted fields {n_inf} times"),
         ]
         if provider != "replicate":
             tin = sum(r["usage"]["input"] for r in rows)
@@ -195,57 +430,170 @@ def derive() -> list[tuple[str, str, str | None]]:
     rep = {a: field_pct(rs) for a, rs in _arms(RUNS["replicate"]).items()}
     both = sorted(set(base) & set(rep))
     deltas = [abs(base[a] - rep[a]) for a in both]
+    # The effects the drift section sorts, on the two Claude runs. Micro-d is
+    # field% minus the baseline's; paired-d is report.py's point estimate.
+    def effects(path):
+        by_arm = _arms(path)
+        base_by_q = {r["qid"]: r for r in by_arm[BASE]}
+        stats = report.paired_by_arm(by_arm, base_by_q,
+                                     random.Random(report.SEED))
+        b = field_pct(by_arm[BASE])
+        return ({a: f"{field_pct(rs) - b:.1f}" for a, rs in by_arm.items()},
+                {a: f"{st[0]:.1f}" for a, st in stats.items()
+                 if st[0] is not None})
+    m1, p1 = effects(RUNS["anthropic"])
+    m2, p2 = effects(RUNS["replicate"])
+    mo, _ = effects(RUNS["openai"])
+    arms_of = {p: _arms(path) for p, path in RUNS.items()}
+    # How many runs separate an arm, in the words the drift section uses.
+    seps = {p: separated_arms(path) for p, path in RUNS.items()}
+
+    def separates_in(*arms):
+        n = sum(a in seps[p] for p in RUNS for a in arms)
+        return "no run" if n == 0 else "some run"
+    for label, arm, lead, with_paired in (
+            ("incompleteness", "incomplete", "Incompleteness", False),
+            ("unresolved entities", "unresolved", "unresolved entities", False),
+            ("governance", "governed", "Governance", True),
+            ("staleness", "stale", "Staleness", True)):
+        pat = rf"{lead} \(micro-d {re.escape(m1[arm])} and {re.escape(m2[arm])}"
+        if with_paired:
+            pat += (rf"; paired-d {re.escape(p1[arm])} and "
+                    rf"{re.escape(p2[arm])}\)")
+        if arm == "governed":
+            pat += rf" separates in {separates_in(arm)}"
+        out.append((f"{label} across the two Claude runs",
+                    f"{m1[arm]}/{m2[arm]}", pat))
+    stale_move = abs(float(m1["stale"]) - float(m2["stale"]))
+    out.append(("staleness movement between the Claude runs",
+                f"{stale_move:.1f}", rf"moved {stale_move:.1f} points"))
+
+    # Where the presentation arms and the policy bypass sit against the
+    # baseline across all three runs. The sentence has no digit in it, and
+    # its meaning inverts with one word, so the words are derived.
+    def sides(*arms):
+        found = {side(arms_of[p][a], arms_of[p][BASE])
+                 for p in RUNS for a in arms}
+        if found <= {"above", "level with"}:
+            return "at or above" if "above" in found else "level with"
+        if found <= {"below", "level with"}:
+            return "at or below" if "below" in found else "level with"
+        return "on both sides of"
+    out.append(("presentation arms and the policy bypass against the baseline",
+                f"{sides('diluted', 'nostructure')}/{sides('unpoliced')}",
+                rf"Dilution and prose rendering sit "
+                rf"{sides('diluted', 'nostructure')} the baseline in every run "
+                rf"and separate in {separates_in('diluted', 'nostructure')}; "
+                rf"the policy bypass lands {sides('unpoliced')} it"))
+
+    # The headline section restates the unpoliced and baseline cells in prose,
+    # with the side of the baseline each run landed on.
+    cell = {p: {a: f"{field_pct(arms_of[p][a]):.1f}" for a in ("unpoliced", BASE)}
+            for p in RUNS}
+    s_a = side(arms_of["anthropic"]["unpoliced"], arms_of["anthropic"][BASE])
+    s_r = side(arms_of["replicate"]["unpoliced"], arms_of["replicate"][BASE])
+    s_o = side(arms_of["openai"]["unpoliced"], arms_of["openai"][BASE])
+    out += [
+        ("unpoliced against the baseline on the two Claude runs",
+         f"{cell['anthropic']['unpoliced']}/{cell['replicate']['unpoliced']}",
+         rf"scored {cell['anthropic']['unpoliced']} and "
+         rf"{cell['replicate']['unpoliced']} percent against baselines of "
+         rf"{cell['anthropic'][BASE]} and {cell['replicate'][BASE]}\. So it "
+         rf"landed {s_a} the baseline in the first run and {s_r} it in the "
+         rf"replicate\."),
+        ("unpoliced against the baseline on GPT",
+         f"{cell['openai']['unpoliced']}/{cell['openai'][BASE]}",
+         rf"On GPT it was {cell['openai']['unpoliced']} against "
+         rf"{cell['openai'][BASE]}, {s_o} it\."),
+    ]
+
+    # The floor, as the answer-key section states it.
+    floors = {f"{field_pct(arms_of[p]['none']):.1f}"
+              for p in ("anthropic", "openai")}
+    n_floor = len(arms_of["anthropic"]["none"])
+    floor = floors.pop() if len(floors) == 1 else None
+    out.append(("floor on both vendors", str(floor),
+                rf"both vendors scored {re.escape(floor)} percent across "
+                rf"{n_floor} questions" if floor else r"(?!)"))
+
     out += [
         ("run-to-run max drift", f"{max(deltas):.1f}",
          rf"up to {max(deltas):.1f} POINTS"),
+        ("run-to-run max drift, restated in Limits", f"{max(deltas):.1f}",
+         rf"up to {max(deltas):.1f} points on these runs and "
+         rf"{re.escape(REPLACED_MAX_DRIFT)} on the ones they replaced"),
+        ("replaced runs' max drift (a constant, not re-derived)",
+         REPLACED_MAX_DRIFT,
+         rf"The replaced runs moved by up to "
+         rf"{re.escape(REPLACED_MAX_DRIFT)} points"),
         ("run-to-run mean drift", f"{sum(deltas) / len(deltas):.2f}",
          rf"mean {sum(deltas) / len(deltas):.2f}"),
         ("conditions compared across runs", str(len(both)),
          rf"{len(both)} conditions"),
     ]
 
-    # The unresolved arm's identifier confound, derived and not typed.
-    # This is the one place this repository fails its own "one arm changes one
-    # thing" rule, the correction is roughly half the arm's published effect,
-    # and a disclosure whose numbers are typed by hand is the next thing to go
-    # stale. Every figure in that section of README.md comes from here.
-    confounded = {q.qid for q in questions.build(world.build())
-                  if questions.names_internal_id(q)}
-    out.append(("questions naming an internal id", str(len(confounded)),
-                rf"{len(confounded)} of the 150 question texts"))
-    baselines = set()
+    # The unresolved arm on the current question set, against the replaced
+    # runs' figures, and how much of the replaced effect the identifier
+    # artifact accounts for, in the words README.md uses.
+    shares = {"a fifth": Fraction(1, 5), "a quarter": Fraction(1, 4),
+              "a third": Fraction(1, 3), "half": Fraction(1, 2),
+              "two thirds": Fraction(2, 3)}
+
+    def share(provider, now):
+        f = 1 - float(now) / float(REPLACED_UNRESOLVED[provider])
+        return min(shares, key=lambda w: abs(float(shares[w]) - f))
+    now = {"anthropic": m1["unresolved"], "replicate": m2["unresolved"],
+           "openai": mo["unresolved"]}
+    old = REPLACED_UNRESOLVED
+    out.append((
+        "unresolved micro-d on the three runs, against the replaced runs'",
+        "/".join(now.values()),
+        rf"the arm's micro-d is {re.escape(now['anthropic'])} \(Claude\), "
+        rf"{re.escape(now['replicate'])} \(replicate\) and "
+        rf"{re.escape(now['openai'])} \(GPT\)\. The replaced runs, whose "
+        rf"questions named agreements by internal id, gave "
+        rf"{re.escape(old['anthropic'])}, {re.escape(old['replicate'])} and "
+        rf"{re.escape(old['openai'])}, which puts the identifier's share of "
+        rf"their effect at about {share('anthropic', now['anthropic'])} "
+        rf"\(Claude\), {share('replicate', now['replicate'])} \(replicate\) "
+        rf"and {share('openai', now['openai'])} \(GPT\)"))
+
+    # The questions that name one of two agreements, and how the unresolved arm
+    # does on them. They name it by start date, which both sources carry, so
+    # the arm can identify it as the baseline does. README.md states the arm's
+    # score on them beside the baseline's, so an arm that could not identify
+    # them would show as a gap here.
+    w = world.build()
+    qs = questions.build(w)
+    named = {q.qid for q in qs if questions.names_agreement_start(q)}
+    out.append(("questions naming an agreement by start date", str(len(named)),
+                rf"Of the {len(qs)} question texts, {len(named)} name one of "
+                rf"an organization's two agreements"))
+    out.append(("curve questions per budget",
+                str(questions.CURVE_QUESTIONS),
+                rf"The curve rests on {questions.CURVE_QUESTIONS} questions "
+                rf"per budget, not {len(qs)}"))
+    out.append(renewal_key_figure(w, qs))
     for provider, path in RUNS.items():
         disp = DISPLAY[provider]
         arms = _arms(path)
-        on = [r for r in arms["unresolved"] if r["qid"] in confounded]
-        off = [r for r in arms["unresolved"] if r["qid"] not in confounded]
-        b_on = [r for r in arms[BASE] if r["qid"] in confounded]
-        b_off = [r for r in arms[BASE] if r["qid"] not in confounded]
-        baselines.add(f"{field_pct(b_on):.1f}")
-        out += [
-            (f"{provider} unresolved on the confounded questions",
-             f"{field_pct(on):.1f}",
-             rf"{field_pct(on):.1f} \({disp}\)"),
-            (f"{provider} unresolved micro-d excluding them",
-             f"{field_pct(off) - field_pct(b_off):.1f}",
-             rf"{field_pct(off) - field_pct(b_off):.1f} \({disp}\)"),
-        ]
-    # The baseline answers all 22 on every run, which is what makes the gap
-    # attributable to the arm and not to the questions being hard. It is
-    # one figure only because all three runs agree; if they ever stop
-    # agreeing, this set has more than one member and the claim is wrong.
-    #
-    # Raised, not asserted. `python3 -O` deletes an assert statement and the
-    # message with it, and this is a guard in a shipped gate, not a type
-    # narrowing: under -O the figure below would be one run's number
-    # published as all three's.
-    if len(baselines) != 1:
-        raise SystemExit(
-            f"the runs disagree about the baseline on the identifier-"
-            f"confounded questions ({sorted(baselines)}), so README.md cannot "
-            f"state one figure for all three")
-    out.append(("baseline on the confounded questions", baselines.pop(),
-                r"baseline of 100.0 on all three"))
+        on = [r for r in arms["unresolved"] if r["qid"] in named]
+        b_on = [r for r in arms[BASE] if r["qid"] in named]
+        out.append((f"{provider} unresolved and baseline on the named questions",
+                    f"{field_pct(on):.1f}/{field_pct(b_on):.1f}",
+                    rf"{field_pct(on):.1f} against {field_pct(b_on):.1f} "
+                    rf"\({disp}\)"))
+    out += token_figures()
+    out += provenance_figures()
+
+    hits = curve_unstarted_deal_contexts()
+    n_cq = len(questions.curve_subset(questions.build(world.build())))
+    n_ctx = n_cq * len(assemble.CURVE_BUDGETS)
+    n_hq = len({qid for qid, _ in hits})
+    out.append(("curve contexts carrying an unstarted deal",
+                f"{len(hits)}/{n_ctx}",
+                rf"{len(hits)} of the {n_ctx} curve contexts, on {n_hq} of "
+                rf"the {n_cq} curve questions"))
 
     # The incomplete arm's realized drop, which is a property of the code and
     # not of a run. It is here because README.md states it, and a round "40
@@ -274,10 +622,28 @@ def main() -> int:
 
     cells = derive_cells()
     stated, bold = parse_table(text)
-    prose = derive()
+    # A row several runs derive identically (the same value and the same
+    # pattern, such as each run's generation count) matches the same sentence
+    # each time, so it is one check and is counted once. Where the runs
+    # differ, each keeps its own row and a mismatch still fails.
+    prose, seen = [], set()
+    for label, value, pattern in derive():
+        if (value, pattern) not in seen:
+            seen.add((value, pattern))
+            prose.append((label, value, pattern))
+    prose.append(("condition-table cells", str(len(cells)),
+                  rf"The {len(cells)} condition-table cells"))
     # Plus one for the count itself, which README.md and SAMPLE_RUN.md quote.
     n_figures = len(cells) + len(prose) + 1
     prose.append(("figures checked", str(n_figures), rf"{n_figures} figures"))
+
+    if "--emit" in sys.argv:
+        for (arm, provider), value in sorted(cells.items()):
+            print(f"table cell {arm}/{provider}\n{value}")
+        for label, value, pattern in prose:
+            m = re.search(pattern, flat) if pattern else None
+            print(f"{label}\n{m.group(0) if m else value}")
+        return 0
 
     problems: list[str] = []
     if not stated:
@@ -325,6 +691,16 @@ def main() -> int:
           f"around them")
     print(f"{n_figures - len(problems)} found in README.md, "
           f"{len(problems)} missing")
+    others = other_documents()
+    other_missing = []
+    for doc, label, value, pattern in others:
+        body = re.sub(r"\s+", " ", OTHER_DOCS[doc].read_text(encoding="utf-8"))
+        if not re.search(pattern, body):
+            other_missing.append(f"{doc}: {label}: no match for /{pattern}/ "
+                                 f"(derived {value})")
+    print(f"{len(others) - len(other_missing)} of {len(others)} figures found "
+          f"in {' and '.join(OTHER_DOCS)}")
+    problems += other_missing
     for detail in problems:
         print(f"  MISSING  {detail}")
     if problems:

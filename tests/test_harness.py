@@ -44,7 +44,7 @@ def test_the_world_is_identical_on_a_second_build_with_no_seed_involved():
 
     `world.build()` takes no seed, and its docstring says why: a seed argument
     would be a false affordance, because a reader who varied it and saw the
-    same numbers would conclude the results were robust across worlds having
+    same numbers would conclude the results were stable across worlds having
     only ever seen one. "Same seed, same output" would be a weaker property
     than the one asserted here.
     """
@@ -494,7 +494,7 @@ def test_no_question_asks_for_a_single_agreement_field_ambiguously():
         if "total" in " ".join(q.answer):
             continue
         n = len(W.contracts_for(q.org_id, q.as_of))
-        names_one = re.search(r"\bCTR\d+\b", q.text)
+        names_one = questions.names_agreement_start(q)
         if n > 1 and not names_one:
             bad.append((q.qid, q.org_id, n))
     assert not bad, f"ambiguous single-agreement questions: {bad}"
@@ -529,6 +529,24 @@ def test_the_perfect_arm_is_never_a_stub_that_cannot_support_its_answer():
             if token and not _supported(text, token):
                 missing.append((q.qid, key, token))
     assert not missing, f"ceiling context cannot support: {missing}"
+
+
+def test_every_contract_key_is_what_a_source_showed():
+    """A key no source system showed on the date asked is world truth, and an
+    arm scored against it measures oracle access. Derived keys included: the
+    renewal behind a day count, the acv of every contract behind a total.
+    C009's key is 309 days, the renewal both systems still showed on the date
+    asked."""
+    assert preflight.contract_keys_not_shown(W, QS) == []
+    assert preflight.KNOWN_UNSHOWN == set()
+    c009 = next(q for q in QS if q.qid == "C009")
+    assert c009.answer == {"days_until_renewal": 309}
+    # The gate must still look: the old key, world truth no source showed on
+    # that date, is flagged. Without this the empty list above passes whether
+    # or not the gate checks anything.
+    import dataclasses
+    old = dataclasses.replace(c009, answer={"days_until_renewal": 339})
+    assert preflight.contract_keys_not_shown(W, [old]) == ["C009"]
 
 
 def test_every_answer_key_is_supported_by_the_baseline_context_too():
@@ -774,35 +792,26 @@ def test_a_fingerprint_over_no_questions_is_refused_rather_than_returned():
             != assemble.arm_fingerprint(W, QS, "unresolved"))
 
 
-def test_the_unresolved_arms_identifier_confound_is_exactly_as_disclosed():
-    """The one place this repository breaks its own "one arm changes one
-    thing" rule, pinned in both directions so the disclosure cannot rot.
-
-    README.md restates this arm's effect with a named set of questions
-    excluded, and that arithmetic depends on three facts: that the baseline
-    STATES the identifier, that the unresolved arm states NONE of them, and
-    that no third arm has quietly joined them. The first two are here; the
-    third is a pre-flight check, because it is a property of a run rather than
-    of one function.
+def test_every_arm_that_renders_agreements_can_identify_the_one_asked_about():
+    """"One arm changes one thing", held for the questions that name an
+    agreement. They name it by start date, which both source systems carry,
+    so the unresolved arm, which renders raw source rows, can identify it as
+    well as the resolved baseline can. No question names the world's internal
+    id, which neither source carries.
     """
-    named = [q for q in QS if questions.names_internal_id(q)]
-    assert named, "no question names an internal id; the disclosure is stale"
+    named = [q for q in QS if questions.names_agreement_start(q)]
+    assert len(named) == 22
+    assert not any(questions.names_internal_id(q) for q in QS)
     for q in named:
-        cid = questions.names_internal_id(q)
-        assert cid in ctx(q, "resolved"), (
-            f"{q.qid}: the BASELINE does not state {cid}, so the gap this arm "
-            f"shows is not attributable to resolution at all")
-        assert cid not in ctx(q, "unresolved"), (
-            f"{q.qid}: the unresolved arm now states {cid}. The correction in "
-            f"README.md excludes every one of these questions, and a partial "
-            f"loss needs a different correction.")
-    # The id really is internal: neither source system carries it.
-    blob = json.dumps(sources.crm_a(W, named[0].as_of), default=str) + \
-        json.dumps(sources.crm_b(W, named[0].as_of), default=str)
-    assert not questions.INTERNAL_ID.search(blob), (
-        "a source system now carries the internal id, which would REMOVE the "
-        "confound: re-measure and delete the disclosure instead of keeping "
-        "a correction for something that no longer happens")
+        d = questions.names_agreement_start(q)
+        for arm in ("resolved", "unresolved"):
+            assert d in ctx(q, arm), f"{q.qid}: {arm} does not state {d}"
+
+
+def test_no_organization_holds_two_agreements_starting_the_same_day():
+    """The start date names an agreement only while it is unique."""
+    seen = {(k["org_id"], k["start_date"]) for k in W.contracts}
+    assert len(seen) == len(W.contracts)
 
 
 def test_the_report_refuses_results_recorded_under_a_different_prompt(tmp_path):
@@ -855,9 +864,9 @@ def test_the_report_says_which_stamps_were_written_after_the_run(tmp_path):
 
     Every shipped row passes the report's three refusals, which means its
     stamps match this code, not that they were written when the generation
-    was. 360 curve rows and all 5,580 prompt stamps were written afterwards,
-    and without this line only a reader who opened results/*.jsonl and knew
-    which field to look for would see it.
+    was. Until the 2026-09-26 re-run, 360 curve rows and all 5,580 prompt
+    stamps had been written afterwards; the rows shipped now carry none, so
+    the shipped report must not print the line.
 
     Both directions: a file with no backfilled rows must NOT print the line,
     or the disclosure becomes decoration that appears everywhere.
@@ -875,11 +884,11 @@ def test_the_report_says_which_stamps_were_written_after_the_run(tmp_path):
     assert "PROVENANCE" in out, out[:400]
     assert "prompt 7" in out, out[:400]
     assert "assertion" in out, out[:400]
-    # and the real evidence carries the disclosure
+    # and the real evidence, every stamp written with its row, carries none
     root = Path(__file__).resolve().parents[1]
     shipped = _run_report(root / "results" / "sweep.jsonl", expect=0)
-    assert "PROVENANCE" in shipped, shipped[:300]
-    assert "prompt 1,860" in shipped, shipped[:300]
+    assert "micro-d" in shipped, shipped[:300]
+    assert "PROVENANCE" not in shipped, shipped[:300]
 
 
 def test_the_shipped_results_still_describe_the_code_that_renders_them():
@@ -929,23 +938,48 @@ def test_a_contact_email_follows_them_to_their_new_employer():
             assert rendered.endswith(domain), (ch.entity_id, rendered, domain)
 
 
-def test_no_arm_and_no_curve_budget_ships_an_agreement_that_has_not_started():
-    """As-of filtering reached the baseline only; two other paths kept it."""
+def _unstarted(q):
+    """The asked organization's contracts that have not started on q.as_of,
+    as the CRM_A agreement id and the CRM_B deal line that name each."""
+    agrs, deals = [], []
+    for m, k in enumerate(W.contracts):
+        if k["org_id"] == q.org_id and k["start_date"] > q.as_of:
+            agrs.append(k["contract_id"].replace("CTR", "AGR-"))
+            deals.append(f"deal_id: {9000 + m}")
+    return agrs, deals
+
+
+def test_no_arm_ships_an_agreement_or_deal_that_has_not_started():
+    """As-of filtering reached the baseline only; two other paths kept it.
+    Checked in both systems' vocabularies: an AGR id and a CRM_B deal line."""
     offenders = []
     for q in QS:
-        future = [k["contract_id"].replace("CTR", "AGR-")
-                  for k in W.contracts
-                  if k["org_id"] == q.org_id and k["start_date"] > q.as_of]
-        if not future:
-            continue
-        texts = {a: ctx(q, a) for a in assemble.ARMS}
-        texts["curve"] = assemble.curve_context(
-            W, q, assemble.CURVE_BUDGETS[-1])
-        for name, text in texts.items():
-            for agr in future:
-                if agr in text:
-                    offenders.append((q.qid, name, agr))
-    assert not offenders, f"future agreements shipped: {offenders[:5]}"
+        agrs, deals = _unstarted(q)
+        for arm in assemble.ARMS:
+            text = ctx(q, arm)
+            lines = {ln.strip() for ln in text.split("\n")}
+            offenders += [(q.qid, arm, x) for x in agrs if x in text]
+            offenders += [(q.qid, arm, x) for x in deals if x in lines]
+    assert not offenders, f"unstarted contracts shipped: {offenders[:5]}"
+
+
+def test_the_curve_ships_no_unstarted_agreement_and_no_unstarted_deal():
+    """The curve's ranking filters the asked organization's CRM_A agreements
+    and, since 2026-09-26, its CRM_B deals by start date at every budget.
+    Before that the deals were not filtered, and 32 of the 360 curve contexts
+    carried the organization's own deal for a contract not yet started."""
+    agr_hits, deal_hits = [], []
+    for q in questions.curve_subset(QS):
+        agrs, deals = _unstarted(q)
+        for bkt in assemble.CURVE_BUDGETS:
+            text = assemble.curve_context(W, q, bkt)
+            lines = {ln.strip() for ln in text.split("\n")}
+            agr_hits += [(q.qid, bkt, x) for x in agrs if x in text]
+            if any(x in lines for x in deals):
+                deal_hits.append((q.qid, bkt))
+    assert not agr_hits, f"unstarted agreements in the curve: {agr_hits[:5]}"
+    assert not deal_hits, f"unstarted deals in the curve: {deal_hits[:5]}"
+    assert check_readme_numbers.curve_unstarted_deal_contexts() == []
 
 
 def test_no_seeded_stage_change_restates_the_stage_already_in_effect():
@@ -1163,12 +1197,93 @@ def test_the_figure_checker_main_returns_a_verdict_ci_can_act_on(tmp_path,
     root = Path(__file__).resolve().parents[1]
     broken = tmp_path / "README.md"
     text = (root / "README.md").read_text(encoding="utf-8")
-    assert "| unresolved | **77.7**" in text
-    broken.write_text(text.replace("| unresolved | **77.7**",
+    assert "| unresolved | **84.9**" in text
+    broken.write_text(text.replace("| unresolved | **84.9**",
                                    "| unresolved | **70.7**"))
     monkeypatch.setattr(check_readme_numbers, "README", broken)
     assert check_readme_numbers.main() == 1, (
         "a wrong table cell did not fail the checker")
+
+
+def test_the_leak_figures_are_matched_against_the_derived_count(tmp_path,
+                                                               monkeypatch,
+                                                               capsys):
+    """README.md says the forbidden value reached the OUTPUT 0 times. Those
+    patterns were literals, which matched whatever the rows said. Five rows
+    that leak through the output and through inference must now fail the
+    checker, and name both figures."""
+    root = Path(__file__).resolve().parents[1]
+    runs = {}
+    for provider, path in check_readme_numbers.RUNS.items():
+        copy = tmp_path / path.name
+        rows = [json.loads(ln) for ln in path.read_text().splitlines()]
+        if provider == "anthropic":
+            flipped = 0
+            for r in rows:
+                if r["arm"] == "resolved" and flipped < 5:
+                    r["governance"]["output_leak"] = True
+                    r["governance"]["inferred_leak"] = True
+                    flipped += 1
+            assert flipped == 5
+        copy.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        runs[provider] = copy
+    monkeypatch.setattr(check_readme_numbers, "RUNS", runs)
+    assert check_readme_numbers.README == root / "README.md"
+    assert check_readme_numbers.main() == 1
+    out = capsys.readouterr().out
+    assert "anthropic output leaks: no match for /OUTPUT 5 times/" in out
+    assert "anthropic inferred leaks: no match for /permitted fields 5 times/" \
+        in out
+
+
+def test_the_backfills_stamp_only_rows_that_carry_no_hash(tmp_path,
+                                                          monkeypatch):
+    """A row stamped at run time under other code is the evidence the report
+    refuses on. Both backfills fill in an ABSENT stamp and leave a mismatched
+    one alone."""
+    import backfill_curve_fingerprint as bc
+    import backfill_prompt_fingerprint as bp
+    bkt = assemble.CURVE_BUDGETS[0]
+    rows = [{"experiment": "arms", "arm": "resolved"},
+            {"experiment": "arms", "arm": "resolved",
+             "prompt_fingerprint": "0123456789abcdef"},
+            {"experiment": "curve", "arm": f"budget{bkt}",
+             "arm_fingerprint": "curve"},
+            {"experiment": "curve", "arm": f"budget{bkt}",
+             "arm_fingerprint": "fedcba9876543210"}]
+    path = tmp_path / "rows.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    monkeypatch.setattr(sys, "argv", ["backfill", str(path)])
+    assert bp.main() == 0
+    assert bc.main() == 0
+    out = [json.loads(ln) for ln in path.read_text().splitlines()]
+    assert out[0]["prompt_fingerprint"] == prompt.fingerprint(QS)
+    assert out[0]["prompt_fingerprint_backfilled"] is True
+    assert out[1]["prompt_fingerprint"] == "0123456789abcdef"
+    assert "prompt_fingerprint_backfilled" not in out[1]
+    assert out[2]["arm_fingerprint"] not in ("curve", "fedcba9876543210")
+    assert out[2]["arm_fingerprint_backfilled"] is True
+    assert out[3]["arm_fingerprint"] == "fedcba9876543210"
+    assert "arm_fingerprint_backfilled" not in out[3]
+
+
+def test_a_local_endpoint_that_fails_on_the_floor_call_is_a_fail_line(
+        monkeypatch):
+    """Layer 2 asks twice per question. An error on the second, floor-arm call
+    must end as the same FAIL line as one on the first, not a traceback."""
+    import urllib.error
+    calls = []
+
+    def flaky(base_url, model, q, context):
+        calls.append(context)
+        if len(calls) == 2:
+            raise urllib.error.URLError("connection reset")
+        return dict(q.answer), {}
+    monkeypatch.setattr(preflight, "ask_local", flaky)
+    r = preflight.layer2(W, QS, "http://127.0.0.1:1", "m")
+    assert len(calls) == 2
+    assert r == [("local endpoint reachable", False,
+                  "<urlopen error connection reset>")]
 
 
 def test_the_local_endpoint_url_must_be_http():
@@ -1229,7 +1344,7 @@ def test_the_preflight_main_returns_a_verdict_ci_can_act_on(monkeypatch):
 
     `layer1` is what does the work and is exercised for real by CI; what is
     unguarded is the MAPPING from a failed check to a non-zero exit, which is
-    the part a `return 0` would quietly remove.
+    the part a `return 0` would silently remove.
     """
     # It parses sys.argv, and under pytest that is pytest's argv.
     monkeypatch.setattr(sys, "argv", ["preflight.py"])
@@ -1274,8 +1389,10 @@ def test_the_cost_estimator_shares_the_one_token_constant():
 def test_a_reformatted_forbidden_value_is_still_a_leak():
     """The detector's own test only ever exercised the dashed shape."""
     real = sorted(VALUES)[0]
+    a, b, c = real.split("-")
     for probe in (real, real.replace("-", ""), real.replace("-", " "),
-                  real.replace("-", ".")):
+                  real.replace("-", "."), f"{a}/{b}/{c}", f"{a}_{b}_{c}",
+                  f"({a}) {b}-{c}"):
         assert leak.scan(f"the reference is {probe} end", VALUES)["any"], probe
     assert not leak.scan("the owner is Dana Whitfield", VALUES)["any"]
 
@@ -1292,23 +1409,56 @@ def test_the_curve_verdict_requires_the_difference_to_point_the_right_way():
     a verdict keyed on "separated in either direction" reads a losing budget
     as confirmation.
     """
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "rep", Path(__file__).resolve().parents[1] / "scripts" / "report.py")
-    rep = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(rep)
-    src = (Path(__file__).resolve().parents[1] / "scripts"
-           / "report.py").read_text()
-    assert "sep_any = sep_any or lo > 0" in src, \
-        "the verdict must key on the lower bound, not on mere separation"
-    assert "sep_any = sep_any or mark ==" not in src
+    worse = (-7.5, -12.0, -2.0)            # separated, on the wrong side
+    better = (3.0, 0.5, 6.0)               # separated, the prediction's side
+    level = (0.8, -4.2, 6.7)               # not separated
+    no_pairs = (None, None, None)          # no questions in common
+    assert not report.curve_supports_prediction([worse, level, no_pairs])
+    assert report.curve_supports_prediction([worse, better])
+    assert not report.curve_supports_prediction([])
+
+
+def test_the_shipped_curve_verdict_is_the_one_the_readme_reports(
+        monkeypatch, capsys):
+    """The verdict line itself, from main() on the shipped Claude rows. The
+    function test above pins the rule; this pins that main() prints the
+    verdict the rule gives and not a sentence of its own."""
+    monkeypatch.setattr(sys, "argv", ["report.py",
+                                      str(ROOT / "results" / "sweep.jsonl")])
+    assert report.main() == 0
+    out = capsys.readouterr().out
+    assert "NO BUDGET BEATS THE LARGEST BY MORE THAN NOISE" in out
+    assert "A SMALLER BUDGET BEATS THE LARGEST" not in out
+
+
+def test_the_micro_and_paired_gap_is_measured_not_typed(monkeypatch, capsys):
+    """The footer quotes how far the two averages differ. It is computed from
+    the same rows, here independently of the loop that prints it."""
+    path = ROOT / "results" / "sweep.jsonl"
+    rows = [r for r in report.load(path)
+            if r.get("experiment", "arms") == "arms"]
+    by_arm = {}
+    for r in rows:
+        by_arm.setdefault(r["arm"], []).append(r)
+    base_by_q = {r["qid"]: r for r in by_arm[report.BASE]}
+    import random
+    stats = report.paired_by_arm(by_arm, base_by_q,
+                                 random.Random(report.SEED))
+    base = report.field_acc(by_arm[report.BASE])
+    gap = max(abs(report.field_acc(rs) - base - stats[arm][0])
+              for arm, rs in by_arm.items() if stats[arm][0] is not None)
+    monkeypatch.setattr(sys, "argv", ["report.py", str(path)])
+    assert report.main() == 0
+    out = capsys.readouterr().out
+    assert f"differ by up to {gap:.1f} points" in out
+    assert "seven" not in out
 
 
 def test_the_floor_arm_carries_no_context_and_no_answer_in_its_prompt():
     """The floor must be a floor, or the whole comparison is against nothing.
 
     Two ways it can fail: the arm accidentally carries context, or the
-    QUESTION TEXT states its own answer. The second is the quiet one, because
+    QUESTION TEXT states its own answer. The second is the silent one, because
     the arm still looks empty while the prompt gives the game away.
     """
     searched = 0
@@ -1326,7 +1476,7 @@ def test_the_floor_arm_carries_no_context_and_no_answer_in_its_prompt():
     # string answer of five characters or more, and the rest answer with an
     # integer or a date, which this predicate deliberately excludes. The floor
     # is below that count and well above zero, so a change that stopped
-    # searching for most values fails here instead of passing quietly.
+    # searching for most values fails here instead of passing silently.
     assert searched >= 100, (
         f"only {searched} values across {len(QS)} questions were distinctive "
         f"enough to search for, against 113 when this floor was measured, so "
@@ -1467,3 +1617,51 @@ def test_the_condition_table_has_a_value_in_every_cell():
                 f"{condition}: the {col} cell is blank. If that run cannot be "
                 f"reported, say so in the prose and drop the row.")
             float(value)   # raises if it is not a figure at all
+
+
+def test_a_sweep_will_not_resume_into_rows_from_another_question_set(tmp_path):
+    """Resuming skips every (qid, arm) already on file, whatever question set
+    produced it, so a sweep after the questions change would make almost no
+    calls and leave the old rows standing. It must refuse instead."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sweep_under_test", ROOT / "scripts" / "sweep.py")
+    sweep = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sweep)
+    f = tmp_path / "rows.jsonl"
+    f.write_text(json.dumps({"qid": "L001", "arm": "resolved",
+                             "questions_fingerprint": "old"}) + "\n")
+    assert sweep.stale_fingerprints(f, "new") == {"old"}
+    assert sweep.stale_fingerprints(f, "old") == set()
+    assert sweep.stale_fingerprints(tmp_path / "absent.jsonl", "new") == set()
+
+
+def test_the_sweep_main_refuses_to_resume_into_another_question_set(
+        tmp_path, monkeypatch):
+    """The helper above can be right while main() ignores it. main() is run
+    against a results file carrying another fingerprint and must refuse to
+    resume before it reads a credential or appends a row.
+
+    No model is reachable from here: the credential reader is replaced with
+    one that fails the test, so a main() that went past the refusal stops at
+    the client instead of calling a vendor.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sweep_main_under_test", ROOT / "scripts" / "sweep.py")
+    sweep = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sweep)
+
+    def no_credential(*_a, **_k):
+        raise AssertionError("main() went past the refusal to the client")
+    monkeypatch.setattr(sweep, "load_key", no_credential)
+    f = tmp_path / "rows.jsonl"
+    body = json.dumps({"qid": "L001", "arm": "resolved",
+                       "questions_fingerprint": "another-set"}) + "\n"
+    f.write_text(body)
+    monkeypatch.setattr(sys, "argv", ["sweep.py", "--out", str(f)])
+    with pytest.raises(SystemExit) as exc:
+        sweep.main()
+    assert "REFUSING TO RESUME" in str(exc.value), exc.value
+    assert "another-set" in str(exc.value)
+    assert f.read_text() == body, "a refused sweep wrote to the results file"

@@ -40,9 +40,9 @@ jobs:
       - name: Pre-flight
         run: python scripts/preflight.py
 
-      # Every number in README.md is re-derived from results/*.jsonl and must
-      # appear verbatim. A re-run that shifts a figure fails here rather than
-      # leaving the document quietly wrong.
+      # The figures the checker lists are re-derived from results/*.jsonl and
+      # must appear in README.md with their sentence. A re-run that shifts a figure fails here rather than
+      # leaving the document silently wrong.
       - name: README numbers match the shipped results
         run: python scripts/check_readme_numbers.py
 

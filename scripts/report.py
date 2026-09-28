@@ -3,8 +3,9 @@
     python3 scripts/report.py                 # the full sweep
     python3 scripts/report.py results/x.jsonl # any results file
 
-Reports paired differences against the resolved baseline, per stratum as well
-as in aggregate, and states the resolution floor rather than ranking noise.
+Reports paired differences against the resolved baseline, with each arm's raw
+field accuracy per stratum beside them, and states the resolution floor rather
+than ranking noise.
 
 The resolution floor is computed, not asserted. It comes from a bootstrap over
 questions, which is the right unit: the same question in two arms is a matched
@@ -101,6 +102,20 @@ def separated(stats: dict) -> set:
     """
     return {arm for arm, (pt, lo, hi) in stats.items()
             if arm != BASE and pt is not None and (lo > 0 or hi < 0)}
+
+
+def curve_supports_prediction(pairs) -> bool:
+    """True when some smaller budget beats the largest by more than noise.
+
+    `pairs` holds one (point, lo, hi) per smaller budget, paired against the
+    largest. Direction matters. The prediction is that a SMALLER budget scores
+    HIGHER than the largest, so only lo > 0 supports it. An interval that
+    excludes zero on the NEGATIVE side means the smaller budget is worse, which
+    is the opposite claim, and treating "separated" as "supported" made a
+    losing budget read as confirmation. A budget with no questions in common
+    with the largest (lo is None) is evidence of nothing.
+    """
+    return any(lo is not None and lo > 0 for _, lo, _ in pairs)
 
 
 def main() -> int:
@@ -205,6 +220,7 @@ def main() -> int:
           f"{'leak':>5}  " +
           " ".join(f"{s[:4]:>5}" for s in strata))
     stats = paired_by_arm(by_arm, base_by_q, rng)
+    gap = 0.0
     for arm in assemble.ARMS:
         rs = by_arm.get(arm, [])
         if not rs:
@@ -221,6 +237,7 @@ def main() -> int:
             for s in strata)
         sep = " " if arm == BASE else ("*" if lo > 0 or hi < 0 else " ")
         micro = field_acc(rs) - field_acc(by_arm[BASE])
+        gap = max(gap, abs(micro - pt))
         print(f"{arm:<13} {field_acc(rs):>7.1f} {exact(rs):>7.1f} "
               f"{micro:>+8.1f} {pt:>+9.1f} {f'[{lo:+.1f}, {hi:+.1f}]':>16} "
               f"{tok:>8,.0f} {sep:<1} {leaks:>5}  {per}")
@@ -230,7 +247,7 @@ def main() -> int:
           "equally.\npaired-d = mean over QUESTIONS of the per-question "
           "difference, which is what\nthe interval is computed on. Quote which "
           "one you mean; they are not the same\nnumber and on this data they "
-          "differ by up to about seven points.")
+          f"differ by up to {gap:.1f} points.")
 
     if curve_rows:
         print("\nTOKEN-BUDGET CURVE (ranked context cut at a budget):")
@@ -238,38 +255,40 @@ def main() -> int:
         for r in curve_rows:
             by_b[int(r["arm"].replace("budget", ""))].append(r)
         print(f"{'budget':>8} {'field%':>7} {'exact%':>7} {'in tok':>8}  n")
-        best = None
+        accs = {}
         for bkt in sorted(by_b):
             rs = by_b[bkt]
             acc = field_acc(rs)
             tok = sum(r["usage"]["input"] for r in rs) / len(rs)
             print(f"{bkt:>8} {acc:>7.1f} {exact(rs):>7.1f} {tok:>8,.0f}  "
                   f"{len(rs)}")
-            if best is None or acc > best[1]:
-                best = (bkt, acc)
+            accs[bkt] = acc
+        # Every budget that ties for the top score is named, so a tie does not
+        # print as whichever budget the loop reached first.
+        top_acc = max(accs.values())
+        peaks = [b for b in sorted(accs) if abs(accs[b] - top_acc) < 1e-9]
         last = sorted(by_b)[-1]
         # An eyeballed peak is not a peak. Each budget is paired against the
         # LARGEST budget, which turns "does more context hurt" into an
         # interval instead of a ranking of six noisy numbers.
         print(f"\n  paired against the largest budget ({last}):")
         biggest = {r["qid"]: r for r in by_b[last]}
-        sep_any = False
+        pairs = []
         for bkt in sorted(by_b):
             if bkt == last:
                 continue
             pt, lo, hi = paired_ci({r["qid"]: r for r in by_b[bkt]},
                                    biggest, rng)
-            # Direction matters. The prediction is that a SMALLER budget
-            # scores HIGHER than the largest, so only lo > 0 supports it. An
-            # interval that excludes zero on the NEGATIVE side means the
-            # smaller budget is worse, which is the opposite claim, and
-            # treating "separated" as "supported" made a losing budget read
-            # as confirmation.
+            pairs.append((pt, lo, hi))
+            if pt is None:
+                print(f"    budget {bkt:>5} vs {last}: no paired questions")
+                continue
             mark = "*" if lo > 0 or hi < 0 else " "
-            sep_any = sep_any or lo > 0
             print(f"    budget {bkt:>5} vs {last}: {pt:>+6.1f} "
                   f"{f'[{lo:+.1f}, {hi:+.1f}]':>16} {mark}")
-        print(f"\n  peak at budget {best[0]} ({best[1]:.1f}%); "
+        sep_any = curve_supports_prediction(pairs)
+        print(f"\n  peak at budget {' and '.join(map(str, peaks))} "
+              f"({top_acc:.1f}%); "
               f"largest budget {last} scores {field_acc(by_b[last]):.1f}%")
         if sep_any:
             print("  A SMALLER BUDGET BEATS THE LARGEST BY MORE THAN NOISE, "
@@ -281,9 +300,11 @@ def main() -> int:
                   "supported by this run. A star on a\n  negative row means "
                   "that budget is significantly WORSE than the largest, which"
                   "\n  is the opposite claim and is not evidence for it.")
-        print("  The curve uses 60 questions drawn equally from the four "
-              "strata, so its\n  levels are not directly comparable with the "
-              "arm table above, which uses 150.")
+        n_curve = len({r["qid"] for r in curve_rows})
+        n_arms = len({r["qid"] for r in arms_rows})
+        print(f"  The curve uses {n_curve} questions drawn equally from the "
+              f"four strata, so its\n  levels are not directly comparable "
+              f"with the arm table above, which uses {n_arms}.")
 
     print("\nGOVERNANCE:")
     for arm in assemble.ARMS:
@@ -298,7 +319,7 @@ def main() -> int:
                   f"inferred {i:>4}")
     leaky = sorted({r["arm"] for r in rows if r["governance"]["prompt_leak"]})
     clean_rows = [r for r in rows if r["arm"] not in leaky]
-    # Name the arms that leak rather than asserting the rest are clean. The
+    # Name the arms that leak instead of asserting the rest are clean. The
     # previous sentence was unconditional and would print "0 leaks everywhere
     # else" directly beneath a line showing the baseline leaking.
     print(f"  arms with any prompt leak: {', '.join(leaky) or 'none'}")

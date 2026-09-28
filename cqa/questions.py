@@ -87,7 +87,7 @@ def names_internal_id(q: "Question") -> str | None:
 
 # Below this length a value is not evidence. "CA" appears in any prose, and a
 # floor check that searched for it would report every prompt as leaking its own
-# answer; four characters is where the world's values stop being ambiguous.
+# answer; five characters is where the world's values stop being ambiguous.
 MIN_DISTINCTIVE = 5
 
 
@@ -112,23 +112,54 @@ def _name_agreement(w: World, org_id: str, k: dict, as_of: date) -> str:
     An ambiguous question therefore measures nothing, so the text disambiguates
     wherever the world does not.
 
-    It disambiguates with an identifier the unresolved arm cannot see, which
-    is the one place this repository fails its own "one arm changes one thing"
-    rule. `k["contract_id"]` is CTRnnn, the world's internal id; neither
-    source system carries it. The 22 questions this branch produces are
-    therefore asking the unresolved arm about an entity it cannot identify, and
-    about half that arm's published effect is that, not resolution. The text
-    stays as it is, because changing it would change
-    `questions.fingerprint` and invalidate all 5,580 shipped generations, which
-    cannot be re-measured without spending the money again. It is disclosed in
-    README.md, derived by `scripts/check_readme_numbers.py`, and gated by
-    `scripts/preflight.py` so that no OTHER arm can acquire the same flaw
-    unnoticed.
+    It disambiguates by START DATE, which both source systems carry (CRM_A's
+    `start`, CRM_B's `started`) and every arm that renders agreements shows.
+    The world's internal id, CTRnnn, is never used: neither source carries it,
+    so the unresolved arm, which renders raw source rows, could not identify
+    the agreement and would score a failure of identification as a failure of
+    resolution. No organization holds two contracts that start on the same
+    day; tests/test_harness.py holds it.
     """
     name = w.org(org_id)["name"]
     if len(w.contracts_for(org_id, as_of)) > 1:
-        return f"agreement {k['contract_id']} at {name}"
+        return f"the agreement that started on {_iso(k['start_date'])} at {name}"
     return name
+
+
+#: How a question names one of an organization's agreements.
+AGREEMENT_START = re.compile(r"the agreement that started on (\d{4}-\d{2}-\d{2})")
+
+
+def names_agreement_start(q: "Question") -> str | None:
+    """The start date by which this question names an agreement, if it does."""
+    m = AGREEMENT_START.search(q.text)
+    return m.group(1) if m else None
+
+
+def shown_contract_value(w: World, cid: str, fname: str, as_of: date):
+    """The answer key for a contract field: the truth, if a source showed it.
+
+    The key is World.value_as_of, the value by EFFECTIVE date, whenever either
+    source system showed that value on `as_of`. When neither did, the key is
+    the value they both showed. A correction that took effect before the date
+    asked and was recorded after it is invisible on that date, so a key taken
+    from the effective value would be world truth no pipeline could reach.
+    Over all 150 questions C009 is the one key this rule decides (309 days,
+    the renewal both systems still showed). Where the two systems disagree and
+    neither shows the truth, it raises rather than pick one.
+    """
+    from cqa import sources
+    truth = w.value_as_of("contract", cid, fname, as_of)
+    base = next(k for k in w.contracts if k["contract_id"] == cid)[fname]
+    a = sources._as_of(w, "contract", cid, fname, base, as_of, True)
+    b = sources._as_of(w, "contract", cid, fname, base,
+                       as_of - timedelta(days=sources.B_LAG_DAYS), False)
+    if truth in (a, b):
+        return truth
+    if a == b:
+        return a
+    raise ValueError(f"{cid}.{fname} on {as_of}: truth {truth!r} shown by "
+                     f"neither system, and they disagree ({a!r}, {b!r})")
 
 
 def build(w: World) -> list[Question]:
@@ -136,7 +167,7 @@ def build(w: World) -> list[Question]:
     seen: set[tuple] = set()
 
     def add(stratum, as_of, text, answer, org_id):
-        # A duplicate question is a wasted generation and quietly reweights
+        # A duplicate question is a wasted generation and silently reweights
         # the strata, so identity is the text together with the date.
         key = (text, as_of)
         if key in seen:
@@ -151,10 +182,10 @@ def build(w: World) -> list[Question]:
         return w.value_as_of("org", org_id, "stage", as_of)
 
     def acv(cid, as_of):
-        return w.value_as_of("contract", cid, "acv", as_of)
+        return shown_contract_value(w, cid, "acv", as_of)
 
     def renewal(cid, as_of):
-        return w.value_as_of("contract", cid, "renewal_date", as_of)
+        return shown_contract_value(w, cid, "renewal_date", as_of)
 
     def n_stage_changes(org_id, as_of):
         return sum(1 for ch in w.changes
@@ -338,9 +369,9 @@ CURVE_QUESTIONS = 60
 def curve_subset(qs, n=CURVE_QUESTIONS):
     """An EQUAL-SIZED sample from each stratum, n in total.
 
-    Equal rather than proportional on purpose: the curve is read per stratum
-    as well as in aggregate, and equal draws give every stratum the same power
-    to show its own shape.
+    Equal rather than proportional: the curve is read per stratum as well as in
+    aggregate, and equal draws give every stratum the same power to show its
+    own shape.
 
     A stride over a stratum-sorted list is not a sample. Qs is sorted by
     stratum, so qs[::2][:n] walks the early strata and runs out before

@@ -1,9 +1,9 @@
 # Predictions, recorded before the runs
 
 Written down before any model was called, so that one the runs did not support
-cannot quietly become a footnote. Both are reproduced here unchanged.
+cannot silently become a footnote. Both are reproduced here unchanged.
 
-What this file can and cannot establish, said plainly: it is a claim of
+What this file can and cannot establish: it is a claim of
 pre-registration, not a proof of it. Nothing here is timestamped by a third
 party, and a reader who wants proof rather than a claim will not find it. The
 reason to believe it is that the prediction the runs did not support is still
@@ -17,17 +17,20 @@ here, stated as strongly as it was made.
 
 NOT SUPPORTED, on both vendors. No budget beats the largest by more than noise.
 The only budgets that separate do so downward, which is the opposite claim.
-Claude's point estimates do fall past 600 tokens and GPT's do not fall at all,
-but neither separation supports the prediction.
+Both vendors' point estimates dip slightly after their peak, Claude's after
+1,200 tokens (level from 600) and GPT's after 2,400, but neither dip separates
+from noise.
 
 NOT SUPPORTED IS NOT THE SAME AS REFUTED, and the wording here is deliberate.
-Refuting this prediction would take an interval showing a smaller budget
+Supporting this prediction would take an interval showing a smaller budget
 BEATING the largest by more than noise, in the direction the prediction names.
 No such interval exists in either run: every budget's interval against the
-largest either spans zero or separates the wrong way. A design with 60
-questions per budget and one generation per cell cannot distinguish "the effect
-is absent" from "the effect is smaller than this test can see", so this file
-says the weaker thing it can support. README.md and SAMPLE_RUN.md use the same
+largest either spans zero or separates the wrong way. Refuting it would take
+the opposite evidence, that no smaller budget beats the largest by more than
+some stated margin, and an interval that spans zero is not that. A design with
+60 questions per budget and one generation per cell cannot distinguish "the
+effect is absent" from "the effect is smaller than this test can see", so this
+file says the weaker thing it can support. README.md and SAMPLE_RUN.md use the same
 words for the same reason.
 
 The finding that survives is weaker and duller: more context stops helping.

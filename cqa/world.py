@@ -90,7 +90,7 @@ class World:
     contracts: list[dict] = field(default_factory=list)
     changes: list[Change] = field(default_factory=list)
     # Which seeded defect each organization carries, so the question builder
-    # can stratify on it rather than guessing from the data.
+    # can stratify on it instead of guessing from the data.
     defects: dict[str, str] = field(default_factory=dict)
 
     def org(self, org_id: str) -> dict:
@@ -141,7 +141,7 @@ def build() -> World:
     world, by modular arithmetic over fixed lists, and reproducibility means
     "this code produces this world" rather than "a seed selects among many".
     A seed argument would be a false affordance: a reader who varied it and
-    saw the same numbers would conclude the results were robust across worlds
+    saw the same numbers would conclude the results were stable across worlds
     having only ever seen one.
 
     Varying the World is a robustness check this repository has not run. It is

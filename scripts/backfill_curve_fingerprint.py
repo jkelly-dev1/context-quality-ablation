@@ -40,7 +40,7 @@ def main() -> int:
 
     for path in (Path(p) for p in sys.argv[1:]):
         rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
-        touched = skipped = 0
+        touched = skipped = stale = 0
         for r in rows:
             if r.get("experiment") != "curve":
                 continue
@@ -48,14 +48,22 @@ def main() -> int:
             if want is None:
                 skipped += 1
                 continue
-            if r.get("arm_fingerprint") == want:
-                continue                       # already stamped, at write time
+            stamp = r.get("arm_fingerprint")
+            if stamp == want:
+                continue                       # already stamped with it
+            if stamp not in (None, "curve"):
+                # A real hash of other code. Overwriting it would erase the
+                # evidence the report refuses stale rows on.
+                stale += 1
+                continue
             r["arm_fingerprint"] = want
             r["arm_fingerprint_backfilled"] = True
             touched += 1
         path.write_text("".join(json.dumps(r) + "\n" for r in rows))
         print(f"{path}: {touched} curve rows backfilled"
-              + (f", {skipped} at budgets this code no longer runs" if skipped else ""))
+              + (f", {skipped} at budgets this code no longer runs" if skipped else "")
+              + (f", {stale} stamped by other code and left for the report "
+                 f"to refuse" if stale else ""))
     return 0
 
 

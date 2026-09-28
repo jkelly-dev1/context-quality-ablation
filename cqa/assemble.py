@@ -7,8 +7,8 @@ not to a difference in wording, ordering or instruction.
 
 Two rules that make the ablation mean anything:
 
-  One arm changes one thing. Over-stuffed differs from resolved in ranking,
-  deduplication and policy enforcement, and in nothing else, not in field
+  One arm changes one thing. Diluted differs from resolved in the amount of
+  irrelevant material and in nothing else: not in policy, not in field
   selection, not in the entities included. An arm that moves two variables
   cannot attribute its own result.
 
@@ -29,13 +29,13 @@ Two rules that make the ablation mean anything:
   after the as-of date inflates every arm at once, which is invisible because
   it moves nothing relative to anything.
 
-The governance path is seeded to fail in one arm on purpose. National_id is
-stripped by the policy that the resolved path applies. The UNPOLICED arm is
-that same content with the policy step skipped, and it is deliberately the
-same SIZE as the baseline so that any accuracy difference cannot be dilution.
-That is the ordinary shape of this defect: a control that holds on the primary
-path and is absent from an alternate one, and the finding it enables is that
-skipping it costs nothing a quality metric can see.
+The governance path is seeded to fail in one arm. National_id is stripped by
+the policy that the resolved path applies. The UNPOLICED arm is that same
+content with the policy step skipped, and it matches the baseline's SIZE so
+that any accuracy difference cannot be dilution. That is the ordinary shape of
+this defect: a control that holds on the primary path and is absent from an
+alternate one, and the finding it enables is that skipping it costs nothing a
+quality metric can see.
 """
 from __future__ import annotations
 
@@ -287,10 +287,10 @@ def _prose(obj) -> str:
 # amount of money per point and buy a different experiment, so the limit is
 # disclosed rather than removed.
 CURVE_BUDGETS = [150, 300, 600, 1200, 2400, 4800]
-# Measured, not assumed, and defined once. This value cuts the budget, so a
-# wrong one mislabels every point on the curve. It lives here and the cost
-# estimator imports it: two copies of one constant is the drift shape that
-# already mislabeled this axis once.
+# Measured, and defined once. This value cuts the budget, so a wrong one
+# mislabels every point on the curve. It lives here and the cost estimator
+# imports it: two copies of one constant is the drift shape that already
+# mislabeled this axis once.
 CHARS_PER_TOKEN = 2.1
 
 
@@ -318,7 +318,16 @@ def ranked_facts(w: World, q: Question, as_of) -> list[str]:
                    or r["account_id"] != q.org_id.replace("ORG", "ACC-")]):
         line = _render(_strip_policy(row))
         (tiers[1] if row.get("account_id") == akey else tiers[2]).append(line)
-    for row in b["companies"] + b["people"] + b["deals"]:
+    # CRM_B's deals are filtered by start date as CRM_A's agreements are, so
+    # no budget ships the asked organization's deal for a contract that had
+    # not started on the date asked. The unresolved arm filters them the same
+    # way.
+    live = {9000 + i for i, k in enumerate(w.contracts)
+            if k["contract_id"] in {c["contract_id"]
+                                    for c in w.contracts_for(q.org_id, as_of)}}
+    deals = [r for r in b["deals"]
+             if r["company_id"] != 5000 + idx or r["deal_id"] in live]
+    for row in b["companies"] + b["people"] + deals:
         line = _render(_strip_policy(row))
         same = (row.get("company_id") == 5000 + idx)
         (tiers[1] if same else tiers[2]).append(line)
@@ -423,7 +432,7 @@ def context_for(w: World, q: Question, arm: str) -> str:
         # fraction unfalsifiable. min() is a bound and not a policy: it exists
         # so a world with fewer keys degrades instead of raising, and the test
         # asserts len(keys) == CANDIDATE_FIELDS on every question so it cannot
-        # quietly start binding.
+        # silently start binding.
         drop = set(rng.sample(keys, min(DROPPED_FIELDS, len(keys))))
         return _render({k: v for k, v in merged.items() if k not in drop})
 
@@ -517,8 +526,8 @@ def arm_fingerprint(w, qs, arm: str) -> str:
     describe the condition they are labeled with, with nothing in the output
     to say so.
 
-    Per arm, deliberately. A change to one arm invalidates that arm and not
-    the other nine, so a fix costs one arm's re-run instead of a whole sweep.
+    Per arm. A change to one arm invalidates that arm and not the other nine,
+    so a fix costs one arm's re-run instead of a whole sweep.
     """
     if not qs:
         # An empty question set is not a condition. `context_for` refuses an

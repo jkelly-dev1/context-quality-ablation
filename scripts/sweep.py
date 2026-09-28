@@ -73,6 +73,19 @@ def load_key(name: str = "ANTHROPIC_API_KEY") -> str:
     sys.exit(f"{name} not defined in {path}")
 
 
+def stale_fingerprints(results: Path, fp: str) -> set[str]:
+    """Question-set fingerprints on file that are not this run's."""
+    if not results.is_file():
+        return set()
+    out = set()
+    for line in results.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            got = json.loads(line).get("questions_fingerprint")
+            if got and got != fp:
+                out.add(got)
+    return out
+
+
 def done_keys(results: Path) -> set[tuple[str, str]]:
     if not results.is_file():
         return set()
@@ -161,20 +174,17 @@ def main() -> int:
                     choices=sorted(PROVIDERS))
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int, default=0)
+    # A new question set gets a new file. The default paths are the shipped
+    # evidence; a sweep after a change to the questions writes elsewhere and
+    # replaces them only once it is complete.
+    ap.add_argument("--out", type=Path, default=None,
+                    help="write results here instead of the default path")
     args = ap.parse_args()
 
     cfg = PROVIDERS[args.provider]
     model = cfg["model"]
-    results = (RESULTS if args.provider == "anthropic"
-               else RESULTS.with_name(f"sweep_{args.provider}.jsonl"))
-
-    if args.provider == "anthropic":
-        import anthropic
-        client = anthropic.Anthropic(api_key=load_key(cfg["key"]),
-                                     max_retries=3)
-    else:
-        import openai
-        client = openai.OpenAI(api_key=load_key(cfg["key"]), max_retries=3)
+    results = args.out or (RESULTS if args.provider == "anthropic"
+                           else RESULTS.with_name(f"sweep_{args.provider}.jsonl"))
 
     w = world.build()
     qs = questions.build(w)
@@ -192,6 +202,25 @@ def main() -> int:
     arm_fp.update({f"budget{b}": assemble.curve_fingerprint(w, qs, b)
                    for b in assemble.CURVE_BUDGETS})
     results.parent.mkdir(parents=True, exist_ok=True)
+    # Resuming across a change would mix two experiments. done_keys skips a
+    # (qid, arm) already on file whatever question set produced it, so a run
+    # after the questions change would make almost no calls and leave the old
+    # rows standing. Refuse instead.
+    stale = stale_fingerprints(results, fp)
+    if stale:
+        raise SystemExit(f"REFUSING TO RESUME {results}: it holds rows for "
+                         f"another question set ({', '.join(sorted(stale))}). "
+                         f"Write the new sweep with --out.")
+    # The client is built after the refusal, so a sweep that must not resume
+    # stops before it reads a credential.
+    if args.provider == "anthropic":
+        import anthropic
+        client = anthropic.Anthropic(api_key=load_key(cfg["key"]),
+                                     max_retries=3)
+    else:
+        import openai
+        client = openai.OpenAI(api_key=load_key(cfg["key"]), max_retries=3)
+
     already = done_keys(results)
 
     # The unit of work is (question, arm-label, context). The curve reuses the
@@ -255,6 +284,10 @@ def main() -> int:
             "prompt_fingerprint": prompt_fp,
             "arm_fingerprint": arm_fp[arm],
         }
+        if answer is None:
+            # A reply that did not parse grades exactly like a model that
+            # answered null to every field. Keeping the text tells them apart.
+            row["unparsed_reply"] = raw[:2000]
         with _lock:
             fh.write(json.dumps(row) + "\n")
             fh.flush()

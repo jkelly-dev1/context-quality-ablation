@@ -24,15 +24,16 @@ proved nothing:
   has run before it, scores as caught whatever the mutation does. Every named
   test is run alone, on the unmutated tree, and must pass.
 
-What it does to keep the tree intact. The original text is copied outside the
-tree and its sha256 recorded in a sentinel BEFORE the patch is written, so an
-interrupted run is repairable; SIGTERM, SIGINT and SIGHUP restore and re-raise;
-the next run repairs what a SIGKILL left. After every entry the file's sha256
-must match what it was, and the sweep stops if it does not. __pycache__ is
-purged between entries: CPython decides a .pyc is still current from the
-source's mtime truncated to whole seconds and its size in bytes, so a
-mutate-run-restore cycle that changes neither can leave the interpreter running
-bytecode compiled from the mutated file after the file on disk is clean again.
+What it does to keep the tree intact. The original text is copied to
+.mutation_suite_pristine/ at the repository root, which git ignores, and its
+sha256 recorded in a sentinel BEFORE the patch is written, so an interrupted
+run is repairable; SIGTERM, SIGINT and SIGHUP restore and re-raise; the next
+run repairs what a SIGKILL left. After every entry the file's sha256 must match
+what it was, and the sweep stops if it does not. __pycache__ is purged between
+entries: CPython decides a .pyc is still current from the source's mtime
+truncated to whole seconds and its size in bytes, so a mutate-run-restore cycle
+that changes neither can leave the interpreter running bytecode compiled from
+the mutated file after the file on disk is clean again.
 
 Exit status is 0 when every entry was caught and non-zero otherwise, so CI can
 gate on it. It is not a coverage measure: each entry is one specific claim,
@@ -98,11 +99,11 @@ MUTATIONS = [
         "test": 'tests/test_harness.py::test_the_prompt_fingerprint_moves_with_the_instruction_and_not_the_context',
     },
     {
-        "name": "M7 the unresolved arm starts stating the internal id, which REMOVES the disclosed confound and makes README.md's correction wrong",
-        "file": 'cqa/assemble.py',
-        "find": '            "CRM_A": {"accounts": [_strip_policy(r) for r in arows],\n                      "contacts": [_strip_policy(r) for r in acont],\n                      "agreements": aagr},',
-        "replace": '            "CRM_A": {"accounts": [_strip_policy(r) for r in arows],\n                      "contacts": [_strip_policy(r) for r in acont],\n                      "agreements": [dict(x, contract_id=\n                                          x["agreement_id"]\n                                          .replace("AGR-", "CTR"))\n                                     for x in aagr]},',
-        "test": 'tests/test_harness.py::test_the_unresolved_arms_identifier_confound_is_exactly_as_disclosed',
+        "name": "M7 questions go back to naming an agreement by the internal id, which no source carries and the unresolved arm cannot see",
+        "file": 'cqa/questions.py',
+        "find": '        return f"the agreement that started on {_iso(k[\'start_date\'])} at {name}"',
+        "replace": '        return f"the agreement {k[\'contract_id\']} at {name}"',
+        "test": 'tests/test_harness.py::test_every_arm_that_renders_agreements_can_identify_the_one_asked_about',
     },
     {
         "name": 'M8 the default credential path stops being ignored by git, so `git add -A` would stage a key file',
@@ -128,15 +129,15 @@ MUTATIONS = [
     {
         "name": 'M11 a condition whose interval excludes zero loses its emphasis, so bold stops meaning the one thing README.md says it means',
         "file": 'README.md',
-        "find": '| governed | **93.3** | **95.4** | **94.5** |',
-        "replace": '| governed | 93.3 | **95.4** | **94.5** |',
+        "find": '| stale | **93.7** | **93.7** | 92.9 |',
+        "replace": '| stale | 93.7 | **93.7** | 92.9 |',
         "test": 'tests/test_harness.py::test_the_figure_checker_main_returns_a_verdict_ci_can_act_on',
     },
     {
         "name": 'M12 the count of derived figures is left at a stale value, which is the sentence README.md offers as its tamper-evidence',
         "file": 'README.md',
-        "find": 'The 63 figures in this document',
-        "replace": 'The 34 figures in this document',
+        "find": 'rebuilds 74 figures in this',
+        "replace": 'rebuilds 34 figures in this',
         "test": 'tests/test_harness.py::test_the_figure_checker_main_returns_a_verdict_ci_can_act_on',
     },
     {
@@ -275,6 +276,130 @@ MUTATIONS = [
         "find": '        raise ValueError("no questions: an arm fingerprint over an empty "\n                         "question set describes nothing")',
         "replace": '        return hashlib.sha256(b"").hexdigest()[:16]',
         "test": 'tests/test_harness.py::test_a_fingerprint_over_no_questions_is_refused_rather_than_returned',
+    },    {
+        "name": "M31 the output-leak figure is matched against a literal again, so five leaking rows leave README.md's 'OUTPUT 0 times' green",
+        "file": "scripts/check_readme_numbers.py",
+        "find": "rf\"OUTPUT {n_out} times\"",
+        "replace": "r\"OUTPUT 0 times\"",
+        "test": "tests/test_harness.py::test_the_leak_figures_are_matched_against_the_derived_count",
+    },
+    {
+        "name": "M32 the curve verdict counts a budget separated on EITHER side as support, so a losing budget reads as the prediction holding",
+        "file": "scripts/report.py",
+        "find": "    return any(lo is not None and lo > 0 for _, lo, _ in pairs)",
+        "replace": "    return any(lo is not None and (lo > 0 or hi < 0) for _, lo, hi in pairs)",
+        "test": "tests/test_harness.py::test_the_curve_verdict_requires_the_difference_to_point_the_right_way",
+    },
+    {
+        "name": "M33 the report's micro/paired gap goes back to a typed sentence",
+        "file": "scripts/report.py",
+        "find": "f\"differ by up to {gap:.1f} points.\")",
+        "replace": "\"differ by up to about seven points.\")",
+        "test": "tests/test_harness.py::test_the_micro_and_paired_gap_is_measured_not_typed",
+    },
+    {
+        "name": "M34 the contract-key gate stops checking day counts, so a world-truth key would pass unnamed",
+        "file": "scripts/preflight.py",
+        "find": "            if \"days_until_renewal\" in keys:\n                ok &= any(",
+        "replace": "            if False:\n                ok &= any(",
+        "test": "tests/test_harness.py::test_every_contract_key_is_what_a_source_showed",
+    },
+    {
+        "name": "M35 the curve stops filtering CRM_B deals by start date, so unstarted deals reach it again",
+        "file": 'cqa/assemble.py',
+        "find": '    deals = [r for r in b["deals"]\n             if r["company_id"] != 5000 + idx or r["deal_id"] in live]',
+        "replace": '    deals = list(b["deals"])',
+        "test": "tests/test_harness.py::test_the_curve_ships_no_unstarted_agreement_and_no_unstarted_deal",
+    },
+    {
+        "name": "M43 a contract key reads world truth even where no source showed it",
+        "file": 'cqa/questions.py',
+        "find": '    if truth in (a, b):\n        return truth',
+        "replace": '    if True:\n        return truth',
+        "test": "tests/test_harness.py::test_every_contract_key_is_what_a_source_showed",
+    },
+    {
+        "name": "M44 the sweep resumes into rows from another question set",
+        "file": 'scripts/sweep.py',
+        "find": '            if got and got != fp:\n                out.add(got)',
+        "replace": '            if False:\n                out.add(got)',
+        "test": "tests/test_harness.py::test_a_sweep_will_not_resume_into_rows_from_another_question_set",
+    },
+    {
+        "name": "M45 an organization's two agreements start on the same day, so a start date names neither",
+        "file": 'cqa/world.py',
+        "find": '            start = EPOCH + timedelta(days=30 * ((i + k) % 11))',
+        "replace": '            start = EPOCH + timedelta(days=30 * (i % 11))',
+        "test": "tests/test_harness.py::test_no_organization_holds_two_agreements_starting_the_same_day",
+    },
+    {
+        "name": "M46 a question stops naming which of two agreements it asks about",
+        "file": 'cqa/questions.py',
+        "find": "        return f\"the agreement that started on {_iso(k['start_date'])} at {name}\"",
+        "replace": "        return name",
+        "test": "tests/test_harness.py::test_no_question_asks_for_a_single_agreement_field_ambiguously",
+    },
+    {
+        "name": "M47 a renewal key reads world truth instead of what a source showed",
+        "file": 'cqa/questions.py',
+        "find": '        return shown_contract_value(w, cid, "renewal_date", as_of)',
+        "replace": '        return w.value_as_of("contract", cid, "renewal_date", as_of)',
+        "test": "tests/test_harness.py::test_every_contract_key_is_what_a_source_showed",
+    },
+    {
+        "name": "M36 the prompt backfill overwrites a stamp written under another prompt, erasing what the report refuses on",
+        "file": "scripts/backfill_prompt_fingerprint.py",
+        "find": "            if stamp is not None:\n",
+        "replace": "            if False:\n",
+        "test": "tests/test_harness.py::test_the_backfills_stamp_only_rows_that_carry_no_hash",
+    },
+    {
+        "name": "M37 the curve backfill overwrites a real hash of other code",
+        "file": "scripts/backfill_curve_fingerprint.py",
+        "find": "            if stamp not in (None, \"curve\"):\n",
+        "replace": "            if False:\n",
+        "test": "tests/test_harness.py::test_the_backfills_stamp_only_rows_that_carry_no_hash",
+    },
+    {
+        "name": "M38 the leak detector stops treating slash, underscore and parentheses as separators",
+        "file": "cqa/leak.py",
+        "find": "SEPARATORS = re.compile(r\"[\\s./_()-]\")",
+        "replace": "SEPARATORS = re.compile(r\"[\\s.-]\")",
+        "test": "tests/test_harness.py::test_a_reformatted_forbidden_value_is_still_a_leak",
+    },
+    {
+        "name": "M39 pre-flight layer 2's floor-arm call leaves the try block, so an endpoint error there is a traceback",
+        "file": "scripts/preflight.py",
+        "find": "            none_ans, _ = ask_local(base_url, model, q,\n                                    assemble.context_for(w, q, \"none\"))\n        except (urllib.error.URLError, OSError, KeyError) as exc:\n            check(r, \"local endpoint reachable\", False, str(exc)[:60])\n            return r\n        parsed += isinstance(ans, dict) and set(ans) >= set(q.answer)",
+        "replace": "        except (urllib.error.URLError, OSError, KeyError) as exc:\n            check(r, \"local endpoint reachable\", False, str(exc)[:60])\n            return r\n        parsed += isinstance(ans, dict) and set(ans) >= set(q.answer)\n        none_ans, _ = ask_local(base_url, model, q,\n                                assemble.context_for(w, q, \"none\"))",
+        "test": "tests/test_harness.py::test_a_local_endpoint_that_fails_on_the_floor_call_is_a_fail_line",
+    },    {
+        "name": "M40 the unresolved arm ships every CRM_B deal of the company, started or not",
+        "file": "cqa/assemble.py",
+        "find": "                  if r[\"company_id\"] in cids and r[\"deal_id\"] in live]",
+        "replace": "                  if r[\"company_id\"] in cids]",
+        "test": "tests/test_harness.py::test_no_arm_ships_an_agreement_or_deal_that_has_not_started",
+    },
+    {
+        "name": "M41 the report prints the supporting verdict whatever the curve's intervals say",
+        "file": "scripts/report.py",
+        "find": "        sep_any = curve_supports_prediction(pairs)",
+        "replace": "        sep_any = True",
+        "test": "tests/test_harness.py::test_the_shipped_curve_verdict_is_the_one_the_readme_reports",
+    },
+    {
+        "name": "M48 the sweep's call site ignores the stale-fingerprint result, so main() resumes into another question set",
+        "file": "scripts/sweep.py",
+        "find": "    stale = stale_fingerprints(results, fp)\n    if stale:\n",
+        "replace": "    stale = stale_fingerprints(results, fp)\n    if False:\n",
+        "test": "tests/test_harness.py::test_the_sweep_main_refuses_to_resume_into_another_question_set",
+    },
+    {
+        "name": "M49 the figure checker returns 0 when a figure is missing, so the CI step passes while it prints its own failure",
+        "file": "scripts/check_readme_numbers.py",
+        "find": "        return 1\n    return 0\n",
+        "replace": "        return 0\n    return 0\n",
+        "test": "tests/test_harness.py::test_the_figure_checker_main_returns_a_verdict_ci_can_act_on",
     },
 ]
 
@@ -283,9 +408,15 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+# Caches under these are not the repository's code, and a local virtualenv
+# kept in the tree would otherwise lose its own bytecode before every entry.
+_NOT_OURS = {".venv", "venv", "envs", ".git"}
+
+
 def purge_bytecode() -> None:
     for cache in ROOT.rglob("__pycache__"):
-        shutil.rmtree(cache, ignore_errors=True)
+        if _NOT_OURS.isdisjoint(cache.relative_to(ROOT).parts):
+            shutil.rmtree(cache, ignore_errors=True)
 
 
 def _pristine_path(rel: str) -> Path:
